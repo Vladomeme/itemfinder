@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "itemfinder",
+  "version": "${version}",
+
+  "name": "Item Finder",
+  "description": "self explanatory I think",
+  "authors": [
+    "Vladomeme"
+  ],
+  "contact": {
+  },
+
+  "license": "MIT",
+  "icon": "assets/itemfinder/icon.png",
+
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "net.itemfinder.main.ItemFinder"
+    ]
+  },
+  "mixins": [
+    "itemfinder.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.14.21",
+    "fabric": "*",
+    "minecraft": "*",
+    "java": ">=17"
+  }
+}
