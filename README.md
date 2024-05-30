@@ -10,5 +10,5 @@ Matches items if their name contains argument string, case insensitive (uses bas
 `/finditem data <data>`  
 Matches items that contain argument string in their NBT (literally everything: name, lore, enchantments, attributes, tags, etc etc)  
   
-Full list of blocks/entities checked:
+Full list of blocks/entities checked:  
 ![Снимок экрана от 2024-05-23 17-11-31](https://github.com/Vladomeme/itemfinder/assets/84517135/e835b2a1-33d3-41fd-9aa0-26a92938ec6e)
