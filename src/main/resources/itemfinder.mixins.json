@@ -11,6 +11,11 @@
     "BrewingStandBlockEntityMixin",
     "EntityMixin",
     "LootableContainerBlockEntityMixin",
+    "RegionBasedStorageMixin",
+    "RegionFileMixin",
+    "ServerEntityManagerMixin",
+    "ServerWorldMixin",
+    "StorageIOWorkerMixin",
     "ThreadedAnvilChunkStorageMixin"
   ]
 }
