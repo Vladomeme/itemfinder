@@ -9,7 +9,9 @@
   "mixins": [
     "AbstractFurnaceBlockEntityMixin",
     "BrewingStandBlockEntityMixin",
+    "ChiseledBookshelfBlockEntityMixin",
     "EntityMixin",
+    "ItemDisplayEntityMixin",
     "LootableContainerBlockEntityMixin",
     "RegionBasedStorageMixin",
     "RegionFileMixin",

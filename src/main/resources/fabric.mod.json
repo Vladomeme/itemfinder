@@ -18,6 +18,9 @@
   "entrypoints": {
     "main": [
       "net.itemfinder.main.ItemFinder"
+    ],
+    "modmenu": [
+      "net.itemfinder.main.config.IFModMenu"
     ]
   },
   "mixins": [
@@ -26,7 +29,6 @@
   "depends": {
     "fabricloader": ">=0.14.21",
     "fabric": "*",
-    "minecraft": "*",
-    "java": ">=17"
+    "minecraft": "*"
   }
 }

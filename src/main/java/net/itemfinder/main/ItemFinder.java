@@ -5,16 +5,23 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
+import net.itemfinder.main.config.IFConfig;
 import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.*;
+import net.minecraft.client.option.KeyBinding;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.command.CommandSource;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
+import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
+import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -25,18 +32,15 @@ import net.minecraft.resource.ResourceType;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.*;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.HoverEvent;
-import net.minecraft.text.Style;
-import net.minecraft.text.Text;
+import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
-import net.minecraft.util.collection.DefaultedList;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.storage.ChunkDataList;
 import net.minecraft.world.storage.RegionFile;
+import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,7 +56,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static net.minecraft.server.command.CommandManager.*;
-
+//Added config, check it out (via cloth config).
+//Now works with chest boats and (optionally) item displays
+//Added nested search for bundles and shulker boxes
 public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSource> {
 
     public static final Logger LOGGER = LoggerFactory.getLogger("itemfinder");
@@ -78,6 +84,10 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
     final Map<BlockPos, String> blockResults = Collections.synchronizedMap(new HashMap<>());
     final Map<BlockPos, String> entityResults = Collections.synchronizedMap(new HashMap<>());
 
+    KeyBinding teleportKey;
+    final List<BlockPos> coordinates = new ArrayList<>();
+    int currentPosition = 1;
+
     @Override
     public void onInitialize() {
         ResourceManagerHelper.get(ResourceType.CLIENT_RESOURCES).registerReloadListener(new SimpleSynchronousResourceReloadListener() {
@@ -91,6 +101,13 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
             public void reload(ResourceManager manager) {
                 addCommand();
             }
+        });
+
+        teleportKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Teleport to next result",
+                InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_N, "Item Finder"));
+
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            if (teleportKey.wasPressed()) teleportToNext();
         });
 
         LOGGER.info("Item Finder loaded!");
@@ -126,15 +143,14 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
 
     @SuppressWarnings("SameReturnValue")
     private int search(int type, String s, CommandContext<ServerCommandSource> context) {
+        player = context.getSource().getPlayer();
         if (searching.get()) {
-            Objects.requireNonNull(context.getSource().getPlayer()).sendMessage(Text.of("Search already in progress..."));
+            player.sendMessage(Text.of("Search already in progress..."));
             return 1;
         }
         ServerWorld world = context.getSource().getWorld();
 
         //find matches in all loaded block entities with storage
-        blockResults.clear();
-        entityResults.clear();
         ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
                 .entryIterator().forEach(chunkHolder -> {
                     WorldChunk chunk = chunkHolder.getWorldChunk();
@@ -156,21 +172,20 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
             return 1;
         }
 
-        //Set/reset all scan parameters
+        //Set all scan parameters
         this.searchType = type;
         this.searchString = s;
         this.player = Objects.requireNonNull(context.getSource().getPlayer());
-
-        blockResults.clear();
-        entityResults.clear();
-
-        player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
-        player.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
-                .withColor(Formatting.AQUA)
-                .withUnderline(true)
-                .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))));
-
         globalSearchRequested = true;
+
+        if (IFConfig.INSTANCE.autoConfirm) globalSearch(context);
+        else {
+            player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
+            player.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
+                    .withColor(Formatting.AQUA)
+                    .withUnderline(true)
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))));
+        }
         return 1;
     }
 
@@ -327,10 +342,13 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
     private void checkEntity(Entity entity, int type, String s) {
         entityCount.incrementAndGet();
 
-        DefaultedList<ItemStack> inventory = DefaultedList.of();
+        List<ItemStack> inventory = new ArrayList<>();
         if (entity instanceof ItemFrameEntity) inventory.add(((ItemFrameEntity) entity).getHeldItemStack());
         else if (entity instanceof ArmorStandEntity) entity.getItemsEquipped().forEach(inventory::add);
         else if (entity instanceof ItemEntity) inventory.add(((ItemEntity) entity).getStack());
+        else if (entity instanceof VehicleInventory) inventory.addAll(((VehicleInventory) entity).getInventory());
+        else if (entity instanceof DisplayEntity.ItemDisplayEntity
+                && IFConfig.INSTANCE.scanItemDisplays) inventory.add(((ItemDisplayEntityMixin) entity).getItemStack());
 
         if (inventory.isEmpty()) return;
 
@@ -340,30 +358,38 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
     private void checkBlockEntity(String beName, BlockEntity be, int type, String s) {
         blockCount.incrementAndGet();
 
-        DefaultedList<ItemStack> inventory;
+        List<ItemStack> inventory;
         if (be instanceof LootableContainerBlockEntity) inventory = ((LootableContainerBlockEntityMixin) be).getInvStackList();
         else if (be instanceof AbstractFurnaceBlockEntity) inventory = ((AbstractFurnaceBlockEntityMixin) be).getInventory();
         else if (be instanceof BrewingStandBlockEntity) inventory = ((BrewingStandBlockEntityMixin) be).getInventory();
+        else if (be instanceof LecternBlockEntity) {
+            inventory = new ArrayList<>();
+            inventory.add(((LecternBlockEntity) be).getBook());
+        }
+        else if (be instanceof ChiseledBookshelfBlockEntity) inventory = ((ChiseledBookshelfBlockEntityMixin) be).getInventory();
         else return;
 
         if (checkInventory(inventory, type, s)) blockResults.put(be.getPos(), beName);
     }
 
-    private boolean checkInventory(DefaultedList<ItemStack> inventory, int type, String s) {
+    private boolean checkInventory(List<ItemStack> inventory, int type, String s) {
         for (ItemStack stack : inventory) {
+            NbtCompound nbt = stack.getNbt();
+            String id = Registries.ITEM.getId(stack.getItem()).getPath();
+
+            if (nbt != null && checkNested(id, nbt.copy())) return true;
+
             switch (type) {
                 case 0 -> {
-                    if (!Registries.ITEM.getId(stack.getItem()).getPath().equals(s)) continue;
+                    if (id.equals(s)) return true;
                 }
                 case 1 -> {
-                    if (!stack.getName().getString().toLowerCase().contains(s.toLowerCase())) continue;
+                    if (stack.getName().getString().toLowerCase().contains(s.toLowerCase())) return true;
                 }
                 case 2 -> {
-                    if (stack.getNbt() == null) continue;
-                    if (!stack.getNbt().toString().toLowerCase().contains(s.toLowerCase())) continue;
+                    if (nbt != null && nbt.toString().toLowerCase().contains(s.toLowerCase())) return true;
                 }
             }
-            return true;
         }
         return false;
     }
@@ -382,21 +408,30 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
     private boolean checkInventoryNBT(NbtList nbt) {
         for (NbtElement item : nbt) {
             NbtCompound compound = (NbtCompound) item;
+            String id = compound.getString("id");
+
+            if (checkNested(id, compound.copy())) return true;
+
             switch (searchType) {
                 case 0 -> {
-                    if (!compound.getString("id").replace("minecraft:", "").equals(searchString)) continue;
+                    if (compound.getString("id").replace("minecraft:", "").equals(searchString)) return true;
                 }
                 case 1 -> {
-                    if (!compound.getCompound("tag").getCompound("display").getString("Name").toLowerCase()
-                            .contains(searchString.toLowerCase())) continue;
+                    if (compound.getCompound("tag").getCompound("display").getString("Name").toLowerCase()
+                            .contains(searchString.toLowerCase())) return true;
                 }
                 case 2 -> {
-                    if (!compound.toString().toLowerCase().contains(searchString.toLowerCase())) continue;
+                    if (compound.toString().toLowerCase().contains(searchString.toLowerCase())) return true;
                 }
             }
-            return true;
         }
         return false;
+    }
+
+    private boolean checkNested(String id, NbtCompound nbt) {
+        if (nbt.contains("tag")) nbt = nbt.getCompound("tag");
+        return ((id.contains("bundle") && checkInventoryNBT(nbt.getList("Items", 10)))
+                || (id.contains("shulker_box") && checkInventoryNBT(nbt.getCompound("BlockEntityTag").getList("Items", 10))));
     }
 
     private void sendResults(ServerPlayerEntity player) {
@@ -412,8 +447,7 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
         for (BlockPos pos : entityResults.keySet()) player.sendMessage(makeMessage(++i, pos, entityResults.get(pos)));
         player.sendMessage(Text.of("/-----------------------------/"));
 
-        blockCount.set(0);
-        entityCount.set(0);
+        reset();
     }
 
     private Text makeMessage(int i, BlockPos pos, String name) {
@@ -426,6 +460,22 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
                                 .withUnderline(true)));
     }
 
+    private void teleportToNext() {
+        //noinspection StatementWithEmptyBody
+        while (teleportKey.wasPressed());
+        if (player == null) return;
+
+        if (coordinates.isEmpty() || currentPosition > coordinates.size()) {
+            player.sendMessage(Text.of("No search results in teleport queue!"));
+            return;
+        }
+        BlockPos pos = coordinates.get(currentPosition - 1);
+        player.teleport(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+        player.sendMessage(Text.literal("Teleporting to result " + currentPosition + "/" + coordinates.size())
+                .setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
+        currentPosition++;
+    }
+
     public CompletableFuture<Suggestions> getSuggestions(CommandContext context, SuggestionsBuilder builder) {
         Registries.ITEM.forEach(item -> builder.suggest(Registries.ITEM.getId(item).getPath()));
         return builder.buildFuture();
@@ -436,7 +486,19 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
         ServerPlayerEntity player = Objects.requireNonNull(context.getSource().getPlayer());
         player.sendMessage(Text.of(searching.get() ? "Search interrupted." : "why... search wasn't running..."));
 
-        searching.set(false);
+        reset();
         return 1;
+    }
+
+    private void reset() {
+        searching.set(false);
+        blockCount.set(0);
+        entityCount.set(0);
+        coordinates.clear();
+        coordinates.addAll(blockResults.keySet());
+        coordinates.addAll(entityResults.keySet());
+        currentPosition = 1;
+        blockResults.clear();
+        entityResults.clear();
     }
 }
