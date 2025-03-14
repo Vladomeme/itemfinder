@@ -44,6 +44,10 @@ public class Controller {
     static final List<BlockPos> coordinates = new ArrayList<>();
     static int currentPosition = 1;
 
+
+    /**
+     * Used to create threads for the {@link #scanExecutor}.
+     */
     private static Thread getThread(Runnable runnable) {
         Thread thread = new Thread(runnable);
         thread.setName("Item-Finder-Scan-Worker-" + threadCount++);
@@ -51,6 +55,9 @@ public class Controller {
         return thread;
     }
 
+    /**
+     * Retrieves the positions of all generated chunks for the current dimension by reading world's region files.
+     */
     public static List<Long> getChunkPositions(ServerWorld world) {
         RegionBasedStorageMixin storage = (RegionBasedStorageMixin) (Object)
                 ((StorageIOWorkerMixin) world.getChunkManager().threadedAnvilChunkStorage.getWorker()).getStorage();
@@ -79,6 +86,9 @@ public class Controller {
         }
     }
 
+    /**
+     * Called via command `/finditem confirm`, used to start global search when confirmation is required by current config.
+     */
     @SuppressWarnings("SameReturnValue")
     public static int confirm() {
         if (itemSearchRequested) ItemFinder.globalSearch();
@@ -86,6 +96,10 @@ public class Controller {
         return 1;
     }
 
+    /**
+     * Teleports the player to next search result. Called via a keybind.
+     * Search results are stored in {@link #coordinates}, current position - {@link #currentPosition}.
+     */
     public static void teleportToNext() {
         //noinspection StatementWithEmptyBody
         while (IFMod.teleportKey.wasPressed());
@@ -103,6 +117,9 @@ public class Controller {
         currentPosition++;
     }
 
+    /**
+     * Used to stop running global search. Called via command `/finditem stop`.
+     */
     @SuppressWarnings("SameReturnValue")
     public static int stop(CommandContext<ServerCommandSource> context) {
         ServerPlayerEntity player = Objects.requireNonNull(context.getSource().getPlayer());
@@ -112,6 +129,9 @@ public class Controller {
         return 1;
     }
 
+    /**
+     * Called at the end of each search request. Clears all parameters and records search results to {@link #coordinates}.
+     */
     public static void reset() {
         searching.set(false);
         blockCount.set(0);
@@ -124,6 +144,9 @@ public class Controller {
         LootTableFinder.results.clear();
     }
 
+    /**
+     * Called at game shutdown to remove executor threads. (I don't know if they're removed automatically without this).
+     */
     public static void shutdown() {
         scanExecutor.shutdown();
     }

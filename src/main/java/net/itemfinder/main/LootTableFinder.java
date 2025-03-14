@@ -29,6 +29,9 @@ public class LootTableFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
 
+    /**
+     * Runs a normal loot table search. Called via `/finditem loot_table` without global modifier.
+     */
     @SuppressWarnings("SameReturnValue")
     public static int search(String s, CommandContext<ServerCommandSource> context) {
         player = context.getSource().getPlayer();
@@ -38,7 +41,7 @@ public class LootTableFinder {
         }
         ServerWorld world = context.getSource().getWorld();
 
-        //find matches in all loaded block entities with storage
+        //find matches in all loaded lootable block entities
         ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
                 .entryIterator().forEach(chunkHolder -> {
                     WorldChunk chunk = chunkHolder.getWorldChunk();
@@ -46,11 +49,14 @@ public class LootTableFinder {
                             chunk.getBlockState(be.getPos()).getBlock().getName().getString(), be, s));
                 });
 
-        //send results to the player who executed the command
         sendResults(Objects.requireNonNull(context.getSource().getPlayer()));
         return 1;
     }
 
+    /**
+     * Prepares a global item search. Called via `/finditem loot_table` with global modifier.
+     * Asks for confirmation according to current config.
+     */
     @SuppressWarnings("SameReturnValue")
     public static int prepareGlobalSearch(String s, CommandContext<ServerCommandSource> context) {
         if (searching.get()) {
@@ -74,6 +80,9 @@ public class LootTableFinder {
         return 1;
     }
 
+    /**
+     * Runs a global item search.
+     */
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
         if (!lootTableSearchRequested) {
@@ -95,6 +104,7 @@ public class LootTableFinder {
 
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
 
+            //Check loaded chunks first to avoid loading their data again, remove their positions from queue.
             ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
                     .entryIterator().forEach(chunkHolder -> {
                         WorldChunk chunk = chunkHolder.getWorldChunk();
@@ -106,6 +116,7 @@ public class LootTableFinder {
                         progress.incrementAndGet();
                     });
 
+            //Iterating through all generated, unloaded chunks, extracting their block entity data.
             for (Long position : chunkPositions) {
                 if (!searching.get()) {
                     sendResults(player);
@@ -167,42 +178,57 @@ public class LootTableFinder {
         });
     }
 
+    /**
+     * Adds a new entry to {@link #results} if given block entity fits the search parameter.
+     */
     public static void checkBlockEntity(String beName, BlockEntity be, String s) {
         blockCount.incrementAndGet();
 
         if (!(be instanceof LootableContainerBlockEntity)) return;
         Identifier lootTable = ((LootableContainerBlockEntityMixin) be).getLootTable();
         switch (s) {
+            //Check if block entity has any loot table
             case "any" -> {
                 if (lootTable != null)
                     results.add(new SearchResult(beName, be.getPos(), lootTable.getPath()));
             }
+            //Check if block entity doesn't have a loot table
             case "none" -> {
                 if (lootTable == null)
                     results.add(new SearchResult(beName, be.getPos(), ""));
             }
+            //Check if block entity doesn't have a loot table and has an empty inventory
             case "none_empty" -> {
                 if (lootTable == null && ((LootableContainerBlockEntity) be).isEmpty())
                     results.add(new SearchResult(beName, be.getPos(), ""));
             }
+            //Check if block entity has the right loot table
             default -> {
                 if (lootTable != null && lootTable.getPath().equals(s))
                     results.add(new SearchResult(beName, be.getPos(), lootTable.getPath()));
             }
         }
     }
+
+    /**
+     * Adds a new entry to {@link #results} if given block entity (in NBT form) fits the search parameter.
+     */
     public static void checkBlockEntityNBT(NbtCompound nbt) {
         blockCount.incrementAndGet();
 
+        //minecraft:trapped_chest -> trapped_chest
         String id = nbt.getString("id").split(":")[1];
+
         if (!(id.equals("chest") || id.equals("barrel") || id.equals("dispenser") || id.equals("dropper")
                 || id.equals("hopper") || id.contains("shulker_box") || id.equals("trapped_chest"))) return;
 
+        //trapped_chest -> Trapped Chest
         String name = Arrays.stream(id.split("_"))
                 .map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
                 .collect(Collectors.joining(" "));
         BlockPos pos = new BlockPos(nbt.getInt("x"), nbt.getInt("y"), nbt.getInt("z"));
 
+        //See checkBlockEntity() for branch descriptions
         switch (searchString) {
             case "any" -> {
                 if (nbt.contains("LootTable"))
@@ -223,9 +249,11 @@ public class LootTableFinder {
         }
     }
 
+    /**
+     * Prints out search results with search stats & teleportation commands.
+     */
     public static void sendResults(PlayerEntity player) {
         player.sendMessage(Text.of("/-----------------------------/"));
-        //send results with teleportation commands
         player.sendMessage(Text.of("Blocks searched: " + blockCount));
         player.sendMessage(Text.of("Matching results: " + results.size() +
                 (results.isEmpty() ? " :(" : "")));
@@ -238,6 +266,9 @@ public class LootTableFinder {
         reset();
     }
 
+    /**
+     * Used to make formatted lines for each search result entry.
+     */
     public static Text makeMessage(int i, String name, BlockPos pos, String lootTable) {
         MutableText text = Text.literal((i) + ". ");
         if (!lootTable.isEmpty()) {
@@ -255,6 +286,9 @@ public class LootTableFinder {
         return text;
     }
 
+    /**
+     * Returns item IDs for `/finditem loot_table` autocompletion. Vanilla loot tables are included according to current config.
+     */
     public static CompletableFuture<Suggestions> getSuggestions(CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
         String input = builder.getInput().toLowerCase().replace("/finditem loot_table ", "").replace(" global", "").replace("\"", "");
 

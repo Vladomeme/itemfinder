@@ -41,6 +41,9 @@ public class ItemFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
 
+    /**
+     * Runs a normal item search. Called via `/finditem id/name/data` without global modifier.
+     */
     @SuppressWarnings("SameReturnValue")
     public static int search(int type, String s, CommandContext<ServerCommandSource> context) {
         player = context.getSource().getPlayer();
@@ -57,14 +60,17 @@ public class ItemFinder {
                     if (chunk != null) chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(
                             chunk.getBlockState(be.getPos()).getBlock().getName().getString(), be, type, s));
                 });
-        //find matches in all loaded item frames, armor stands and dropped items
+        //find matches in all loaded storage-entities
         world.iterateEntities().forEach(entity -> checkEntity(entity, type, s));
 
-        //send results to the player who executed the command
         sendResults(Objects.requireNonNull(context.getSource().getPlayer()));
         return 1;
     }
 
+    /**
+     * Prepares a global item search. Called via `/finditem id/name/data` with global modifier.
+     * Asks for confirmation according to current config.
+     */
     @SuppressWarnings("SameReturnValue")
     public static int prepareGlobalSearch(int type, String s, CommandContext<ServerCommandSource> context) {
         if (searching.get()) {
@@ -89,6 +95,9 @@ public class ItemFinder {
         return 1;
     }
 
+    /**
+     * Runs a global item search.
+     */
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
         if (!itemSearchRequested) {
@@ -110,6 +119,7 @@ public class ItemFinder {
 
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
 
+            //Check loaded chunks first to avoid loading their data again, remove their positions from queue.
             ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
                     .entryIterator().forEach(chunkHolder -> {
                         WorldChunk chunk = chunkHolder.getWorldChunk();
@@ -122,6 +132,7 @@ public class ItemFinder {
                     });
             world.iterateEntities().forEach(entity -> checkEntity(entity, searchType, searchString));
 
+            //Iterating through all generated, unloaded chunks, extracting their block entity & entity data.
             for (Long position : chunkPositions) {
                 if (!searching.get()) {
                     sendResults(player);
@@ -210,6 +221,9 @@ public class ItemFinder {
         });
     }
 
+    /**
+     * Used to retrieve inventories of loaded entities, then sent to {@link #checkInventory(List, int, String, String, BlockPos)}.
+     */
     public static void checkEntity(Entity entity, int type, String s) {
         entityCount.incrementAndGet();
 
@@ -226,6 +240,9 @@ public class ItemFinder {
         checkInventory(inventory, type, s, ((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos());
     }
 
+    /**
+     * Used to retrieve inventories of loaded block entities, then sent to {@link #checkInventory(List, int, String, String, BlockPos)}.
+     */
     public static void checkBlockEntity(String beName, BlockEntity be, int type, String s) {
         blockCount.incrementAndGet();
 
@@ -243,11 +260,15 @@ public class ItemFinder {
         checkInventory(inventory, type, s, beName, be.getPos());
     }
 
+    /**
+     * Adds a new entry to {@link #results} if given inventory contains an item that matches the search parameters (id, name, data).
+     */
     public static void checkInventory(List<ItemStack> inventory, int type, String s, String name, BlockPos pos) {
         for (ItemStack stack : inventory) {
             NbtCompound nbt = stack.getNbt();
             String id = Registries.ITEM.getId(stack.getItem()).getPath();
 
+            //If item has NBT data, see if it contains any items within it.
             if (nbt != null) checkNested(id, nbt.copy(), name, pos);
 
             switch (type) {
@@ -266,9 +287,13 @@ public class ItemFinder {
         }
     }
 
+    /**
+     * Used to get block name, position and inventory from NBT of unloaded block entities, then sent to {@link #checkInventoryNBT(NbtList, String, BlockPos)}.
+     */
     public static void checkBlockEntityNBT(NbtCompound nbt) {
         blockCount.incrementAndGet();
 
+        //minecraft:trapped_chest -> Trapped Chest
         String name = Arrays.stream(nbt.getString("id").replace("minecraft:", "").split("_"))
                 .map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
                 .collect(Collectors.joining(" "));
@@ -277,11 +302,15 @@ public class ItemFinder {
         checkInventoryNBT(nbt.getList("Items", 10), name, pos);
     }
 
+    /**
+     * Adds a new entry to {@link #results} if given inventory (in NBTList form) contains an item that matches the search parameters (id, name, data).
+     */
     public static void checkInventoryNBT(NbtList nbt, String name, BlockPos pos) {
         for (NbtElement item : nbt) {
             NbtCompound compound = (NbtCompound) item;
             String id = compound.getString("id");
 
+            //If item has NBT data, see if it contains any items within it.
             checkNested(id, compound.copy(), name, pos);
             ItemStack stack = ItemStack.fromNbt(compound);
 
@@ -301,6 +330,9 @@ public class ItemFinder {
         }
     }
 
+    /**
+     * Calls nested inventory check for found bundles & shulker boxes.
+     */
     public static void checkNested(String id, NbtCompound nbt, String name, BlockPos pos) {
         if (nbt.contains("tag")) nbt = nbt.getCompound("tag");
 
@@ -310,9 +342,11 @@ public class ItemFinder {
             checkInventoryNBT(nbt.getCompound("BlockEntityTag").getList("Items", 10), name, pos);
     }
 
+    /**
+     * Prints out search results with search stats & teleportation commands.
+     */
     public static void sendResults(PlayerEntity player) {
         player.sendMessage(Text.of("/-----------------------------/"));
-        //send results with teleportation commands
         player.sendMessage(Text.of("Blocks/entities searched: " + blockCount + "/" + entityCount));
         player.sendMessage(Text.of("Matching results: " + results.size() +
                 (results.isEmpty() ? " :(" : "")));
@@ -325,6 +359,9 @@ public class ItemFinder {
         reset();
     }
 
+    /**
+     * Used to make formatted lines for each search result entry.
+     */
     public static Text makeMessage(int i, String name, BlockPos pos, ItemStack stack) {
         return Text.literal((i) + ". ")
                 .append(Text.literal(name)
@@ -340,6 +377,10 @@ public class ItemFinder {
                                 .withUnderline(true)));
     }
 
+    /**
+     * Starts an item search with parameters taken from a currently held item. Search mode depends on the config.
+     * Normal and Global modes are called with the corresponding keybinds.
+     */
     public static void searchHandheld(boolean global) {
         //noinspection StatementWithEmptyBody
         while (IFMod.handSearchKey.wasPressed());
@@ -361,6 +402,9 @@ public class ItemFinder {
         if (handler != null) handler.sendCommand("finditem " + mode + " \"" + s + (global ? "\" global" : "\""));
     }
 
+    /**
+     * Returns item IDs for `/finditem id` autocompletion.
+     */
     @SuppressWarnings("unused")
     public static CompletableFuture<Suggestions> getSuggestions(CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
         Registries.ITEM.forEach(item -> {
