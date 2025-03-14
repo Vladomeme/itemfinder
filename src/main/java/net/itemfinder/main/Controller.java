@@ -123,4 +123,8 @@ public class Controller {
         ItemFinder.results.clear();
         LootTableFinder.results.clear();
     }
+
+    public static void shutdown() {
+        scanExecutor.shutdown();
+    }
 }

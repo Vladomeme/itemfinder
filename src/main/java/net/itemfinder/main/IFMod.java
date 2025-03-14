@@ -2,6 +2,7 @@ package net.itemfinder.main;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -54,6 +55,8 @@ public class IFMod implements ModInitializer {
             if (handSearchKey.wasPressed()) ItemFinder.searchHandheld(false);
             if (handGlobalSearchKey.wasPressed()) ItemFinder.searchHandheld(true);
         });
+
+        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> Controller.shutdown());
 
         LOGGER.info("Item Finder loaded!");
     }
