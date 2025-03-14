@@ -17,7 +17,7 @@
   "environment": "*",
   "entrypoints": {
     "main": [
-      "net.itemfinder.main.ItemFinder"
+      "net.itemfinder.main.IFMod"
     ],
     "modmenu": [
       "net.itemfinder.main.config.IFModMenu"

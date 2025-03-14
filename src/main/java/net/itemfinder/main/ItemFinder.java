@@ -1,148 +1,48 @@
 package net.itemfinder.main;
 
-import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
-import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
-import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.itemfinder.main.config.IFConfig;
 import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.*;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.command.CommandSource;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.registry.Registries;
-import net.minecraft.resource.ResourceManager;
-import net.minecraft.resource.ResourceType;
 import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.*;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.storage.ChunkDataList;
-import net.minecraft.world.storage.RegionFile;
-import org.lwjgl.glfw.GLFW;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.jetbrains.annotations.NotNull;
 
-import net.fabricmc.api.ModInitializer;
-
-import java.io.File;
-import java.io.IOException;
-import java.nio.IntBuffer;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
-import static net.minecraft.server.command.CommandManager.*;
-//Added config, check it out (via cloth config).
-//Now works with chest boats and (optionally) item displays
-//Added nested search for bundles and shulker boxes
-public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSource> {
+import static net.itemfinder.main.Controller.*;
 
-    public static final Logger LOGGER = LoggerFactory.getLogger("itemfinder");
+public class ItemFinder {
 
-    private int threadCount = 0;
-    private final ExecutorService scanExecutor = Executors.newFixedThreadPool(4, runnable -> {
-        Thread thread = new Thread(runnable);
-        thread.setName("Item-Finder-Scan-Worker-" + threadCount++);
-        thread.setDaemon(true);
-        return thread;
-    });
-
-    boolean globalSearchRequested = false;
-    final AtomicBoolean searching = new AtomicBoolean(false);
-    int chunkCount;
-    int searchType;
-    String searchString = "";
-    ServerPlayerEntity player;
-
-    final AtomicInteger blockCount = new AtomicInteger(0);
-    final AtomicInteger entityCount = new AtomicInteger(0);
-
-    final Map<BlockPos, String> blockResults = Collections.synchronizedMap(new HashMap<>());
-    final Map<BlockPos, String> entityResults = Collections.synchronizedMap(new HashMap<>());
-
-    KeyBinding teleportKey;
-    final List<BlockPos> coordinates = new ArrayList<>();
-    int currentPosition = 1;
-
-    @Override
-    public void onInitialize() {
-        ResourceManagerHelper.get(ResourceType.CLIENT_RESOURCES).registerReloadListener(new SimpleSynchronousResourceReloadListener() {
-
-            @Override
-            public Identifier getFabricId() {
-                return new Identifier("itemfinder", "assets");
-            }
-
-            @Override
-            public void reload(ResourceManager manager) {
-                addCommand();
-            }
-        });
-
-        teleportKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Teleport to next result",
-                InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_N, "Item Finder"));
-
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (teleportKey.wasPressed()) teleportToNext();
-        });
-
-        LOGGER.info("Item Finder loaded!");
-    }
-
-    public void addCommand() {
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
-                literal("finditem")
-                        .then(literal("id")
-                                .then(argument("id", StringArgumentType.string())
-                                .suggests(this::getSuggestions)
-                                .executes(context -> search(0, StringArgumentType.getString(context, "id"), context))
-                                        .then(literal("global")
-                                        .executes(context -> prepareGlobalSearch(0, StringArgumentType.getString(context, "id"), context))
-                        )))
-                        .then(literal("name")
-                                .then(argument("name", StringArgumentType.string())
-                                .executes(context -> search(1, StringArgumentType.getString(context, "name"), context))
-                                        .then(literal("global")
-                                        .executes(context -> prepareGlobalSearch(1, StringArgumentType.getString(context, "name"), context))
-                        )))
-                        .then(literal("data")
-                                .then(argument("data", StringArgumentType.string())
-                                .executes(context -> search(2, StringArgumentType.getString(context, "data"), context))
-                                        .then(literal("global")
-                                        .executes(context -> prepareGlobalSearch(2, StringArgumentType.getString(context, "data"), context))
-                        )))
-                        .then(literal("stop")
-                                .executes(this::stop))
-                        .then(literal("confirm")
-                                .executes(this::globalSearch))));
-    }
+    static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
 
     @SuppressWarnings("SameReturnValue")
-    private int search(int type, String s, CommandContext<ServerCommandSource> context) {
+    public static int search(int type, String s, CommandContext<ServerCommandSource> context) {
         player = context.getSource().getPlayer();
         if (searching.get()) {
             player.sendMessage(Text.of("Search already in progress..."));
@@ -166,19 +66,19 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
     }
 
     @SuppressWarnings("SameReturnValue")
-    private int prepareGlobalSearch(int type, String s, CommandContext<ServerCommandSource> context) {
+    public static int prepareGlobalSearch(int type, String s, CommandContext<ServerCommandSource> context) {
         if (searching.get()) {
             Objects.requireNonNull(context.getSource().getPlayer()).sendMessage(Text.of("Search already in progress..."));
             return 1;
         }
 
         //Set all scan parameters
-        this.searchType = type;
-        this.searchString = s;
-        this.player = Objects.requireNonNull(context.getSource().getPlayer());
-        globalSearchRequested = true;
+        searchType = type;
+        searchString = s.toLowerCase();
+        player = Objects.requireNonNull(context.getSource().getPlayer());
+        itemSearchRequested = true;
 
-        if (IFConfig.INSTANCE.autoConfirm) globalSearch(context);
+        if (IFConfig.INSTANCE.autoConfirm) globalSearch();
         else {
             player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
             player.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
@@ -190,18 +90,18 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
     }
 
     @SuppressWarnings("SameReturnValue")
-    private int globalSearch(CommandContext<ServerCommandSource> context) {
-        if (!globalSearchRequested) {
-            Objects.requireNonNull(context.getSource().getPlayer()).sendMessage(Text.of("nothing to confirm..."));
-            return 1;
+    public static void globalSearch() {
+        if (!itemSearchRequested) {
+            if (player != null) player.sendMessage(Text.of("nothing to confirm..."));
+            return;
         }
-        globalSearchRequested = false;
+        itemSearchRequested = false;
         searching.set(true);
 
         long start = System.nanoTime();
 
         scanExecutor.submit(() -> {
-            ServerWorld world = context.getSource().getWorld();
+            ServerWorld world = (ServerWorld) player.getWorld();
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
@@ -259,7 +159,7 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
                         nbtData.getList("block_entities", 10).forEach(nbtElement -> checkBlockEntityNBT((NbtCompound) nbtElement));
                     }
                     catch (Throwable e) {
-                        LOGGER.error("Failed to deserialize chunk {} with data of size {}", pos, nbtData.getSize());
+                        IFMod.LOGGER.error("Failed to deserialize chunk {} with data of size {}", pos, nbtData.getSize());
                         future.complete(null);
                         throw e;
                     }
@@ -284,7 +184,7 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
                         entities.stream().forEach(entity -> checkEntity(entity, searchType, searchString));
                     }
                     catch (Throwable e) {
-                        LOGGER.error("Failed to deserialize entity chunk {}", pos);
+                        IFMod.LOGGER.error("Failed to deserialize entity chunk {}", pos);
                         future.complete(null);
                         throw e;
                     }
@@ -304,42 +204,13 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
             }
             catch (Throwable e) {
                 searching.set(false);
-                LOGGER.error("Scan crashed!! Congratulations", e);
+                IFMod.LOGGER.error("Scan crashed!! Congratulations", e);
                 throw new RuntimeException(e);
             }
         });
-        return 1;
     }
 
-    private List<Long> getChunkPositions(ServerWorld world) {
-        RegionBasedStorageMixin storage = (RegionBasedStorageMixin) (Object)
-                ((StorageIOWorkerMixin) world.getChunkManager().threadedAnvilChunkStorage.getWorker()).getStorage();
-        assert storage != null;
-
-        List<Long> positions = new ArrayList<>();
-        try {
-            for (File file : storage.getDirectory().toFile().listFiles()) {
-                RegionFile regionFile = new RegionFile(file.toPath(), storage.getDirectory(), storage.getDsync());
-                IntBuffer buffer = ((RegionFileMixin) regionFile).getSectorData().duplicate();
-
-                String[] split = file.getName().split("\\.", 4);
-                int baseX = Integer.parseInt(split[1]) * 32;
-                int baseZ = Integer.parseInt(split[2]) * 32;
-
-                for (int i = 0; i < 1024; i++) {
-                    if (buffer.get(i) != 0)
-                        positions.add((long) (baseX + (i % 32)) << 32 | (long) (baseZ + (i / 32)) << 32 >>> 32);
-                }
-                regionFile.close();
-            }
-            return positions;
-        }
-        catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private void checkEntity(Entity entity, int type, String s) {
+    public static void checkEntity(Entity entity, int type, String s) {
         entityCount.incrementAndGet();
 
         List<ItemStack> inventory = new ArrayList<>();
@@ -352,10 +223,10 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
 
         if (inventory.isEmpty()) return;
 
-        if (checkInventory(inventory, type, s)) entityResults.put(entity.getBlockPos(), ((EntityMixin) entity).getDefaultName().getString());
+        checkInventory(inventory, type, s, ((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos());
     }
 
-    private void checkBlockEntity(String beName, BlockEntity be, int type, String s) {
+    public static void checkBlockEntity(String beName, BlockEntity be, int type, String s) {
         blockCount.incrementAndGet();
 
         List<ItemStack> inventory;
@@ -369,32 +240,33 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
         else if (be instanceof ChiseledBookshelfBlockEntity) inventory = ((ChiseledBookshelfBlockEntityMixin) be).getInventory();
         else return;
 
-        if (checkInventory(inventory, type, s)) blockResults.put(be.getPos(), beName);
+        checkInventory(inventory, type, s, beName, be.getPos());
     }
 
-    private boolean checkInventory(List<ItemStack> inventory, int type, String s) {
+    public static void checkInventory(List<ItemStack> inventory, int type, String s, String name, BlockPos pos) {
         for (ItemStack stack : inventory) {
             NbtCompound nbt = stack.getNbt();
             String id = Registries.ITEM.getId(stack.getItem()).getPath();
 
-            if (nbt != null && checkNested(id, nbt.copy())) return true;
+            if (nbt != null) checkNested(id, nbt.copy(), name, pos);
 
             switch (type) {
                 case 0 -> {
-                    if (id.equals(s)) return true;
+                    if (!id.equals(s)) continue;
                 }
                 case 1 -> {
-                    if (stack.getName().getString().toLowerCase().contains(s.toLowerCase())) return true;
+                    if (!stack.getName().getString().toLowerCase().contains(s.toLowerCase())) continue;
                 }
                 case 2 -> {
-                    if (nbt != null && nbt.toString().toLowerCase().contains(s.toLowerCase())) return true;
+                    if (nbt == null || nbt.toString().toLowerCase().contains(s.toLowerCase())) continue;
                 }
             }
+            results.add(new SearchResult(name, pos, stack));
+            return;
         }
-        return false;
     }
 
-    private void checkBlockEntityNBT(NbtCompound nbt) {
+    public static void checkBlockEntityNBT(NbtCompound nbt) {
         blockCount.incrementAndGet();
 
         String name = Arrays.stream(nbt.getString("id").replace("minecraft:", "").split("_"))
@@ -402,56 +274,64 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
                 .collect(Collectors.joining(" "));
         BlockPos pos = new BlockPos(nbt.getInt("x"), nbt.getInt("y"), nbt.getInt("z"));
 
-        if (checkInventoryNBT(nbt.getList("Items", 10))) blockResults.put(pos, name);
+        checkInventoryNBT(nbt.getList("Items", 10), name, pos);
     }
 
-    private boolean checkInventoryNBT(NbtList nbt) {
+    public static void checkInventoryNBT(NbtList nbt, String name, BlockPos pos) {
         for (NbtElement item : nbt) {
             NbtCompound compound = (NbtCompound) item;
             String id = compound.getString("id");
 
-            if (checkNested(id, compound.copy())) return true;
+            checkNested(id, compound.copy(), name, pos);
+            ItemStack stack = ItemStack.fromNbt(compound);
 
             switch (searchType) {
                 case 0 -> {
-                    if (compound.getString("id").replace("minecraft:", "").equals(searchString)) return true;
+                    if (!id.equals(searchString)) continue;
                 }
                 case 1 -> {
-                    if (compound.getCompound("tag").getCompound("display").getString("Name").toLowerCase()
-                            .contains(searchString.toLowerCase())) return true;
+                    if (!stack.getName().getString().toLowerCase().contains(searchString)) continue;
                 }
                 case 2 -> {
-                    if (compound.toString().toLowerCase().contains(searchString.toLowerCase())) return true;
+                    if (nbt.toString().toLowerCase().contains(searchString)) continue;
                 }
             }
+            results.add(new SearchResult(name, pos, stack));
+            return;
         }
-        return false;
     }
 
-    private boolean checkNested(String id, NbtCompound nbt) {
+    public static void checkNested(String id, NbtCompound nbt, String name, BlockPos pos) {
         if (nbt.contains("tag")) nbt = nbt.getCompound("tag");
-        return ((id.contains("bundle") && checkInventoryNBT(nbt.getList("Items", 10)))
-                || (id.contains("shulker_box") && checkInventoryNBT(nbt.getCompound("BlockEntityTag").getList("Items", 10))));
+
+        if (id.contains("bundle"))
+            checkInventoryNBT(nbt.getList("Items", 10), name, pos);
+        else if (id.contains("shulker_box"))
+            checkInventoryNBT(nbt.getCompound("BlockEntityTag").getList("Items", 10), name, pos);
     }
 
-    private void sendResults(ServerPlayerEntity player) {
+    public static void sendResults(PlayerEntity player) {
         player.sendMessage(Text.of("/-----------------------------/"));
         //send results with teleportation commands
         player.sendMessage(Text.of("Blocks/entities searched: " + blockCount + "/" + entityCount));
-        player.sendMessage(Text.of("Matching results: " + blockResults.size() + "/" + entityResults.size() +
-                (blockResults.isEmpty() && entityResults.isEmpty() ? " :(" : "")));
+        player.sendMessage(Text.of("Matching results: " + results.size() +
+                (results.isEmpty() ? " :(" : "")));
 
         //format: 1. <block/entity name> [x, y, z]
         int i = 0;
-        for (BlockPos pos : blockResults.keySet()) player.sendMessage(makeMessage(++i, pos, blockResults.get(pos)));
-        for (BlockPos pos : entityResults.keySet()) player.sendMessage(makeMessage(++i, pos, entityResults.get(pos)));
+        for (SearchResult result : results) player.sendMessage(makeMessage(++i, result.name(), result.pos(), result.stack()));
         player.sendMessage(Text.of("/-----------------------------/"));
 
         reset();
     }
 
-    private Text makeMessage(int i, BlockPos pos, String name) {
-        return Text.literal((i) + ". " + name + " ")
+    public static Text makeMessage(int i, String name, BlockPos pos, ItemStack stack) {
+        return Text.literal((i) + ". ")
+                .append(Text.literal(name)
+                        .setStyle(Style.EMPTY
+                                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM,
+                                        new HoverEvent.ItemStackContent(stack)))))
+                .append(Text.literal(" "))
                 .append(Text.literal("[" + pos.getX() + " " + pos.getY() + " " + pos.getZ() + "]")
                         .setStyle(Style.EMPTY
                                 .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.of("Click to teleport")))
@@ -460,45 +340,45 @@ public class ItemFinder implements ModInitializer, SuggestionProvider<CommandSou
                                 .withUnderline(true)));
     }
 
-    private void teleportToNext() {
+    public static void searchHandheld(boolean global) {
         //noinspection StatementWithEmptyBody
-        while (teleportKey.wasPressed());
-        if (player == null) return;
+        while (IFMod.handSearchKey.wasPressed());
+        player = MinecraftClient.getInstance().player;
+        if (player == null || !player.isCreative()) return;
 
-        if (coordinates.isEmpty() || currentPosition > coordinates.size()) {
-            player.sendMessage(Text.of("No search results in teleport queue!"));
-            return;
-        }
-        BlockPos pos = coordinates.get(currentPosition - 1);
-        player.teleport(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
-        player.sendMessage(Text.literal("Teleporting to result " + currentPosition + "/" + coordinates.size())
-                .setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
-        currentPosition++;
+        ItemStack stack = player.getMainHandStack();
+        if (stack == ItemStack.EMPTY) return;
+
+        String s = switch (IFConfig.INSTANCE.handSearchMode) {
+            case Id -> player.getMainHandStack().getItem().toString();
+            case Name -> player.getMainHandStack().getName().getString().toLowerCase();
+        };
+        String mode = IFConfig.INSTANCE.handSearchMode.getDisplayName().getString();
+
+        player.sendMessage(Text.literal("Searching for " + s).setStyle(Style.EMPTY.withColor(Formatting.YELLOW)));
+
+        ClientPlayNetworkHandler handler = MinecraftClient.getInstance().getNetworkHandler();
+        if (handler != null) handler.sendCommand("finditem " + mode + " \"" + s + (global ? "\" global" : "\""));
     }
 
-    public CompletableFuture<Suggestions> getSuggestions(CommandContext context, SuggestionsBuilder builder) {
-        Registries.ITEM.forEach(item -> builder.suggest(Registries.ITEM.getId(item).getPath()));
+    @SuppressWarnings("unused")
+    public static CompletableFuture<Suggestions> getSuggestions(CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
+        Registries.ITEM.forEach(item -> {
+            String name = Registries.ITEM.getId(item).getPath();
+            if (name.contains(builder.getInput().toLowerCase().replace("/finditem id ", "").replace(" global", "")))
+                builder.suggest(name);
+        });
         return builder.buildFuture();
     }
 
-    @SuppressWarnings("SameReturnValue")
-    private int stop(CommandContext<ServerCommandSource> context) {
-        ServerPlayerEntity player = Objects.requireNonNull(context.getSource().getPlayer());
-        player.sendMessage(Text.of(searching.get() ? "Search interrupted." : "why... search wasn't running..."));
+    public record SearchResult(String name, BlockPos pos, ItemStack stack) implements Comparable<SearchResult> {
 
-        reset();
-        return 1;
-    }
-
-    private void reset() {
-        searching.set(false);
-        blockCount.set(0);
-        entityCount.set(0);
-        coordinates.clear();
-        coordinates.addAll(blockResults.keySet());
-        coordinates.addAll(entityResults.keySet());
-        currentPosition = 1;
-        blockResults.clear();
-        entityResults.clear();
+        @Override
+        public int compareTo(@NotNull ItemFinder.SearchResult o) {
+            if (pos().equals(o.pos())) return 0;
+            if (Math.abs(pos.getX()) + Math.abs(pos().getY()) + Math.abs(pos().getZ())
+                    > Math.abs(o.pos.getX()) + Math.abs(o.pos().getY()) + Math.abs(o.pos().getZ())) return 1;
+            return -1;
+        }
     }
 }

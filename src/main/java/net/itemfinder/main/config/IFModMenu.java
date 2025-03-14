@@ -11,10 +11,10 @@ public class IFModMenu implements ModMenuApi {
 
     @Override
     public ConfigScreenFactory<?> getModConfigScreenFactory() {
-        if (FabricLoader.getInstance().isModLoaded("cloth-config2")) {
-            return IFConfigScreen::create;
+        if (FabricLoader.getInstance().isModLoaded("yet_another_config_lib_v3")) {
+            return IFConfig.INSTANCE::create;
         }
         return parent -> new NoticeScreen(() -> MinecraftClient.getInstance().setScreen(parent),
-                Text.of("Item Finder"), Text.of("Mod requires Cloth Config to be able to show the config."));
+                Text.of("Item Finder"), Text.of("Mod requires YetAnotherConfigLib to be able to show the config."));
     }
 }
