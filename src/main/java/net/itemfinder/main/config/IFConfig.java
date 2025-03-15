@@ -21,6 +21,7 @@ public class IFConfig {
     public boolean scanItemDisplays = false;
     public HandSearchMode handSearchMode = HandSearchMode.Name;
     public boolean suggestVanillaLootTables = false;
+    public boolean onlyShowChestsLootTable = true;
 
     private static final File FILE = new File(FabricLoader.getInstance().getConfigDir().toFile(), "itemfinder.json");
 
@@ -85,6 +86,11 @@ public class IFConfig {
                         .option(Option.<Boolean>createBuilder()
                                 .name(Text.literal("Suggest vanilla loot tables"))
                                 .binding(false, () -> suggestVanillaLootTables, newVal -> suggestVanillaLootTables = newVal)
+                                .controller(TickBoxControllerBuilder::create).build())
+
+                        .option(Option.<Boolean>createBuilder()
+                                .name(Text.literal("Only loot table search for chests"))
+                                .binding(true, () -> onlyShowChestsLootTable, newVal -> onlyShowChestsLootTable = newVal)
                                 .controller(TickBoxControllerBuilder::create).build())
                         .build())
                 .build()

@@ -8,9 +8,9 @@ import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.*;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.loot.LootTable;
-import net.minecraft.loot.LootTables;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.RegistryKey;
+import net.minecraft.resource.ResourceManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.*;
@@ -29,6 +29,7 @@ import static net.itemfinder.main.Controller.*;
 public class LootTableFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
+    static final List<String> lootTables = new ArrayList<>();
 
     /**
      * Runs a normal loot table search. Called via `/finditem loot_table` without global modifier.
@@ -37,7 +38,7 @@ public class LootTableFinder {
     public static int search(String s, CommandContext<ServerCommandSource> context) {
         player = context.getSource().getPlayer();
         if (searching.get()) {
-            player.sendMessage(Text.of("Search already in progress..."));
+            player.sendMessage(Text.of("Search already in progress..."), false);
             return 1;
         }
         ServerWorld world = context.getSource().getWorld();
@@ -72,11 +73,11 @@ public class LootTableFinder {
 
         if (IFConfig.INSTANCE.autoConfirm) globalSearch();
         else {
-            player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
+            player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"), false);
             player.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
                     .withColor(Formatting.AQUA)
                     .withUnderline(true)
-                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))));
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))), false);
         }
         return 1;
     }
@@ -87,7 +88,7 @@ public class LootTableFinder {
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
         if (!lootTableSearchRequested) {
-            if (player != null) player.sendMessage(Text.of("nothing to confirm..."));
+            if (player != null) player.sendMessage(Text.of("nothing to confirm..."), false);
             return;
         }
         lootTableSearchRequested = false;
@@ -100,7 +101,7 @@ public class LootTableFinder {
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
-            player.sendMessage(Text.of("Checking " + chunkCount + " chunks..."));
+            player.sendMessage(Text.of("Checking " + chunkCount + " chunks..."), false);
             AtomicInteger progress = new AtomicInteger(0);
 
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
@@ -168,7 +169,7 @@ public class LootTableFinder {
 
                 sendResults(player);
                 player.sendMessage(Text.literal("Finished in " + (System.nanoTime() - start) / 1000000000 + "s.")
-                        .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
+                        .setStyle(Style.EMPTY.withColor(Formatting.AQUA)), false);
                 searching.set(false);
             }
             catch (Throwable e) {
@@ -186,6 +187,7 @@ public class LootTableFinder {
         blockCount.incrementAndGet();
 
         if (!(be instanceof LootableContainerBlockEntity)) return;
+        if (IFConfig.INSTANCE.onlyShowChestsLootTable && !(be instanceof ChestBlockEntity)) return;
         RegistryKey<LootTable> lootTableKey = ((LootableContainerBlockEntityMixin) be).getLootTable();
         switch (s) {
             //Check if block entity has any loot table
@@ -220,7 +222,10 @@ public class LootTableFinder {
         //minecraft:trapped_chest -> trapped_chest
         String id = nbt.getString("id").split(":")[1];
 
-        if (!(id.equals("chest") || id.equals("barrel") || id.equals("dispenser") || id.equals("dropper")
+        if (IFConfig.INSTANCE.onlyShowChestsLootTable) {
+            if (!(id.equals("chest"))) return;
+        }
+        else if (!(id.equals("chest") || id.equals("barrel") || id.equals("dispenser") || id.equals("dropper")
                 || id.equals("hopper") || id.contains("shulker_box") || id.equals("trapped_chest"))) return;
 
         //trapped_chest -> Trapped Chest
@@ -254,15 +259,15 @@ public class LootTableFinder {
      * Prints out search results with search stats & teleportation commands.
      */
     public static void sendResults(PlayerEntity player) {
-        player.sendMessage(Text.of("/-----------------------------/"));
-        player.sendMessage(Text.of("Blocks searched: " + blockCount));
+        player.sendMessage(Text.of("/-----------------------------/"), false);
+        player.sendMessage(Text.of("Blocks searched: " + blockCount), false);
         player.sendMessage(Text.of("Matching results: " + results.size() +
-                (results.isEmpty() ? " :(" : "")));
+                (results.isEmpty() ? " :(" : "")), false);
 
         //format: 1. <block name> [x, y, z]
         int i = 0;
-        for (SearchResult result : results) player.sendMessage(makeMessage(++i, result.name(), result.pos(), result.lootTable));
-        player.sendMessage(Text.of("/-----------------------------/"));
+        for (SearchResult result : results) player.sendMessage(makeMessage(++i, result.name(), result.pos(), result.lootTable), false);
+        player.sendMessage(Text.of("/-----------------------------/"), false);
 
         reset();
     }
@@ -288,26 +293,38 @@ public class LootTableFinder {
     }
 
     /**
-     * Returns item IDs for `/finditem loot_table` autocompletion. Vanilla loot tables are included according to current config.
+     * Returns loot table paths for `/finditem loot_table` autocompletion. Vanilla loot tables are included according to current config.
      */
     @SuppressWarnings("unused")
     public static CompletableFuture<Suggestions> getSuggestions(CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
         String input = builder.getInput().toLowerCase().replace("/finditem loot_table ", "").replace(" global", "").replace("\"", "");
 
-        if ("any".contains(input)) builder.suggest("any");
-        if ("none".contains(input)) builder.suggest("none");
-        if ("none_empty".contains(input)) builder.suggest("none_empty");
+        for (String s : lootTables) {
+            if (s.contains(input)) builder.suggest(s);
+        }
 
-        LootTables.getAll().forEach(registryKey -> {
-            String name = registryKey.getValue().getPath();
-            if (!name.contains(input)) return;
+        return builder.buildFuture();
+    }
+
+    public static void updateSuggestions(ResourceManager rm) {
+        lootTables.clear();
+
+        lootTables.add("any");
+        lootTables.add("none");
+        lootTables.add("none_empty");
+
+        rm.findAllResources("loot_table", id -> {
+            String path = id.getPath();
+            String name = path.substring(11, path.length() - 5);
             if (name.startsWith("archaeology") || name.startsWith("blocks") || name.startsWith("entities")
                     || name.startsWith("equipment") || name.startsWith("gameplay") || name.startsWith("pots")
-                    || name.startsWith("shearing") || name.startsWith("spawners")) return;
-            if (!IFConfig.INSTANCE.suggestVanillaLootTables && (name.startsWith("chests") || name.startsWith("dispensers"))) return;
-            builder.suggest("\"" + name + "\"");
+                    || name.startsWith("shearing") || name.startsWith("spawners") || name.startsWith("dispensers")) return false;
+            if (!IFConfig.INSTANCE.suggestVanillaLootTables && name.startsWith("chests")) return false;
+            return true;
+        }).forEach((id, resources) -> {
+            String path = id.getPath();
+            lootTables.add("\"" + path.substring(11, path.length() - 5) + "\"");
         });
-        return builder.buildFuture();
     }
 
     public record SearchResult(String name, BlockPos pos, String lootTable) {

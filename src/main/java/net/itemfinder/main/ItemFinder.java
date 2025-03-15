@@ -53,7 +53,7 @@ public class ItemFinder {
     public static int search(int type, String s, CommandContext<ServerCommandSource> context) {
         player = context.getSource().getPlayer();
         if (searching.get()) {
-            player.sendMessage(Text.of("Search already in progress..."));
+            player.sendMessage(Text.of("Search already in progress..."), false);
             return 1;
         }
         ServerWorld world = context.getSource().getWorld();
@@ -91,11 +91,11 @@ public class ItemFinder {
 
         if (IFConfig.INSTANCE.autoConfirm) globalSearch();
         else {
-            player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
+            player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"), false);
             player.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
                     .withColor(Formatting.AQUA)
                     .withUnderline(true)
-                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))));
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))), false);
         }
         return 1;
     }
@@ -106,7 +106,7 @@ public class ItemFinder {
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
         if (!itemSearchRequested) {
-            if (player != null) player.sendMessage(Text.of("nothing to confirm..."));
+            if (player != null) player.sendMessage(Text.of("nothing to confirm..."), false);
             return;
         }
         itemSearchRequested = false;
@@ -119,7 +119,7 @@ public class ItemFinder {
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
-            player.sendMessage(Text.of("Checking " + chunkCount + " chunks..."));
+            player.sendMessage(Text.of("Checking " + chunkCount + " chunks..."), false);
             AtomicInteger progress = new AtomicInteger(0);
 
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
@@ -215,7 +215,7 @@ public class ItemFinder {
 
                 sendResults(player);
                 player.sendMessage(Text.literal("Finished in " + (System.nanoTime() - start) / 1000000000 + "s.")
-                        .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
+                        .setStyle(Style.EMPTY.withColor(Formatting.AQUA)), false);
                 searching.set(false);
             }
             catch (Throwable e) {
@@ -376,15 +376,15 @@ public class ItemFinder {
      * Prints out search results with search stats & teleportation commands.
      */
     public static void sendResults(PlayerEntity player) {
-        player.sendMessage(Text.of("/-----------------------------/"));
-        player.sendMessage(Text.of("Blocks/entities searched: " + blockCount + "/" + entityCount));
+        player.sendMessage(Text.of("/-----------------------------/"), false);
+        player.sendMessage(Text.of("Blocks/entities searched: " + blockCount + "/" + entityCount), false);
         player.sendMessage(Text.of("Matching results: " + results.size() +
-                (results.isEmpty() ? " :(" : "")));
+                (results.isEmpty() ? " :(" : "")), false);
 
         //format: 1. <block/entity name> [x, y, z]
         int i = 0;
-        for (SearchResult result : results) player.sendMessage(makeMessage(++i, result.name(), result.pos(), result.stack()));
-        player.sendMessage(Text.of("/-----------------------------/"));
+        for (SearchResult result : results) player.sendMessage(makeMessage(++i, result.name(), result.pos(), result.stack()), false);
+        player.sendMessage(Text.of("/-----------------------------/"), false);
 
         reset();
     }
@@ -426,7 +426,7 @@ public class ItemFinder {
         };
         String mode = IFConfig.INSTANCE.handSearchMode.getDisplayName().getString();
 
-        player.sendMessage(Text.literal("Searching for " + s).setStyle(Style.EMPTY.withColor(Formatting.YELLOW)));
+        player.sendMessage(Text.literal("Searching for " + s).setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), false);
 
         ClientPlayNetworkHandler handler = MinecraftClient.getInstance().getNetworkHandler();
         if (handler != null) handler.sendCommand("finditem " + mode + " \"" + s + (global ? "\" global" : "\""));

@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.minecraft.client.option.KeyBinding;
@@ -60,6 +61,9 @@ public class IFMod implements ModInitializer {
         });
 
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> Controller.shutdown());
+
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> LootTableFinder.updateSuggestions(server.getResourceManager()));
+        ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, rm, success) -> LootTableFinder.updateSuggestions(rm));
 
         ItemFinder.ERROR_STACK.applyComponentsFrom(ComponentMap.builder()
                 .add(DataComponentTypes.CUSTOM_NAME, Text.of("Unknown")).build());

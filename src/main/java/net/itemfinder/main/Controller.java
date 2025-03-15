@@ -107,7 +107,7 @@ public class Controller {
         if (nh == null || player == null || !(player.isCreative() || player.isSpectator())) return;
 
         if (coordinates.isEmpty() || currentPosition > coordinates.size()) {
-            player.sendMessage(Text.of("No search results in teleport queue!"));
+            player.sendMessage(Text.of("No search results in teleport queue!"), false);
             return;
         }
         BlockPos pos = coordinates.get(currentPosition - 1);
