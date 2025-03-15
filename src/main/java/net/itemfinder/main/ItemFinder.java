@@ -8,6 +8,9 @@ import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.*;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
+import net.minecraft.component.Component;
+import net.minecraft.component.ComponentMap;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
@@ -16,6 +19,7 @@ import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
@@ -40,6 +44,7 @@ import static net.itemfinder.main.Controller.*;
 public class ItemFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
+    public static final ItemStack ERROR_STACK = new ItemStack(Items.STICK);
 
     /**
      * Runs a normal item search. Called via `/finditem id/name/data` without global modifier.
@@ -54,7 +59,7 @@ public class ItemFinder {
         ServerWorld world = context.getSource().getWorld();
 
         //find matches in all loaded block entities with storage
-        ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
+        ((ServerChunkLoadingManagerMixin) world.getChunkManager().chunkLoadingManager)
                 .entryIterator().forEach(chunkHolder -> {
                     WorldChunk chunk = chunkHolder.getWorldChunk();
                     if (chunk != null) chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(
@@ -120,13 +125,13 @@ public class ItemFinder {
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
 
             //Check loaded chunks first to avoid loading their data again, remove their positions from queue.
-            ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
+            ((ServerChunkLoadingManagerMixin) world.getChunkManager().chunkLoadingManager)
                     .entryIterator().forEach(chunkHolder -> {
                         WorldChunk chunk = chunkHolder.getWorldChunk();
                         if (chunk == null || !chunkHolder.isAccessible()) return;
 
-                        chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(chunk.getBlockState(be.getPos()).getBlock().getName().getString(),
-                                be, searchType, searchString));
+                        chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(
+                                chunk.getBlockState(be.getPos()).getBlock().getName().getString(), be, searchType, searchString));
                         chunkPositions.remove(chunk.getPos().toLong());
                         progress.incrementAndGet();
                     });
@@ -143,7 +148,7 @@ public class ItemFinder {
                 CompletableFuture<Void> future = new CompletableFuture<>();
                 futures.add(future);
 
-                CompletableFuture<Optional<NbtCompound>> chunkNBT = world.getChunkManager().threadedAnvilChunkStorage.getNbt(pos);
+                CompletableFuture<Optional<NbtCompound>> chunkNBT = world.getChunkManager().chunkLoadingManager.getNbt(pos);
                 @SuppressWarnings("unchecked") CompletableFuture<ChunkDataList<Entity>> entityNBT =
                         ((ServerEntityManagerMixin<Entity>) (((ServerWorldMixin) world).getEntityManager())).getDataAccess().readChunkData(pos);
                 scanExecutor.submit(() -> {
@@ -222,14 +227,15 @@ public class ItemFinder {
     }
 
     /**
-     * Used to retrieve inventories of loaded entities, then sent to {@link #checkInventory(List, int, String, String, BlockPos)}.
+     * Retrieves and checks inventories of loaded entities via {@link #checkInventory(List, int, String)}.
+     * Adds a search result if inventory matches.
      */
     public static void checkEntity(Entity entity, int type, String s) {
         entityCount.incrementAndGet();
 
         List<ItemStack> inventory = new ArrayList<>();
         if (entity instanceof ItemFrameEntity) inventory.add(((ItemFrameEntity) entity).getHeldItemStack());
-        else if (entity instanceof ArmorStandEntity) entity.getItemsEquipped().forEach(inventory::add);
+        else if (entity instanceof ArmorStandEntity) ((ArmorStandEntity) entity).getEquippedItems().forEach(inventory::add);
         else if (entity instanceof ItemEntity) inventory.add(((ItemEntity) entity).getStack());
         else if (entity instanceof VehicleInventory) inventory.addAll(((VehicleInventory) entity).getInventory());
         else if (entity instanceof DisplayEntity.ItemDisplayEntity
@@ -237,19 +243,19 @@ public class ItemFinder {
 
         if (inventory.isEmpty()) return;
 
-        checkInventory(inventory, type, s, ((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos());
+        checkInventory(inventory, type, s).ifPresent(stack -> results.add(
+                new SearchResult(((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos(), stack)));
     }
 
     /**
-     * Used to retrieve inventories of loaded block entities, then sent to {@link #checkInventory(List, int, String, String, BlockPos)}.
+     * Retrieves and checks inventories of loaded block entities via {@link #checkInventory(List, int, String)}.
+     * Adds a search result if inventory matches.
      */
-    public static void checkBlockEntity(String beName, BlockEntity be, int type, String s) {
+    public static void checkBlockEntity(String name, BlockEntity be, int type, String s) {
         blockCount.incrementAndGet();
 
         List<ItemStack> inventory;
-        if (be instanceof LootableContainerBlockEntity) inventory = ((LootableContainerBlockEntityMixin) be).getInvStackList();
-        else if (be instanceof AbstractFurnaceBlockEntity) inventory = ((AbstractFurnaceBlockEntityMixin) be).getInventory();
-        else if (be instanceof BrewingStandBlockEntity) inventory = ((BrewingStandBlockEntityMixin) be).getInventory();
+        if (be instanceof LockableContainerBlockEntity) inventory = ((LockableContainerBlockEntityMixin) be).getHeldStacks();
         else if (be instanceof LecternBlockEntity) {
             inventory = new ArrayList<>();
             inventory.add(((LecternBlockEntity) be).getBook());
@@ -257,19 +263,20 @@ public class ItemFinder {
         else if (be instanceof ChiseledBookshelfBlockEntity) inventory = ((ChiseledBookshelfBlockEntityMixin) be).getInventory();
         else return;
 
-        checkInventory(inventory, type, s, beName, be.getPos());
+        checkInventory(inventory, type, s).ifPresent(stack -> results.add(new SearchResult(name, be.getPos(), stack)));
     }
 
     /**
-     * Adds a new entry to {@link #results} if given inventory contains an item that matches the search parameters (id, name, data).
+     * If given inventory contains an item stack that matches the search parameters (id/name/data), returns that item stack.
      */
-    public static void checkInventory(List<ItemStack> inventory, int type, String s, String name, BlockPos pos) {
+    public static Optional<ItemStack> checkInventory(List<ItemStack> inventory, int type, String s) {
         for (ItemStack stack : inventory) {
-            NbtCompound nbt = stack.getNbt();
+            ComponentMap components = stack.getComponents();
             String id = Registries.ITEM.getId(stack.getItem()).getPath();
 
-            //If item has NBT data, see if it contains any items within it.
-            if (nbt != null) checkNested(id, nbt.copy(), name, pos);
+            //If item has NBT data, see if it contains any items.
+            Optional<ItemStack> optionalStack = checkNested(id, components);
+            if (optionalStack.isPresent()) return optionalStack;
 
             switch (type) {
                 case 0 -> {
@@ -279,67 +286,90 @@ public class ItemFinder {
                     if (!stack.getName().getString().toLowerCase().contains(s.toLowerCase())) continue;
                 }
                 case 2 -> {
-                    if (nbt == null || nbt.toString().toLowerCase().contains(s.toLowerCase())) continue;
+                    if (components == ComponentMap.EMPTY || components == null) continue;
+                    Optional<Component<?>> result = components.stream()
+                            .filter(component -> String.valueOf(component.value()).toLowerCase().contains(s.toLowerCase()))
+                            .findFirst();
+                    if (result.isEmpty()) continue;
                 }
             }
-            results.add(new SearchResult(name, pos, stack));
-            return;
+            return Optional.of(stack);
         }
+        return Optional.empty();
     }
 
     /**
-     * Used to get block name, position and inventory from NBT of unloaded block entities, then sent to {@link #checkInventoryNBT(NbtList, String, BlockPos)}.
+     * Checks block entity inventory via {@link #checkInventoryNBT(NbtList)}, gets block name and position, adds a search result if inventory matches.
      */
     public static void checkBlockEntityNBT(NbtCompound nbt) {
         blockCount.incrementAndGet();
 
-        //minecraft:trapped_chest -> Trapped Chest
-        String name = Arrays.stream(nbt.getString("id").replace("minecraft:", "").split("_"))
-                .map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
-                .collect(Collectors.joining(" "));
-        BlockPos pos = new BlockPos(nbt.getInt("x"), nbt.getInt("y"), nbt.getInt("z"));
+        Optional<ItemStack> stack = checkInventoryNBT(nbt.getList("Items", 10));
+        if (stack.isPresent()) {
+            //minecraft:trapped_chest -> Trapped Chest
+            String name = Arrays.stream(nbt.getString("id").replace("minecraft:", "").split("_"))
+                    .map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
+                    .collect(Collectors.joining(" "));
+            BlockPos pos = new BlockPos(nbt.getInt("x"), nbt.getInt("y"), nbt.getInt("z"));
 
-        checkInventoryNBT(nbt.getList("Items", 10), name, pos);
-    }
-
-    /**
-     * Adds a new entry to {@link #results} if given inventory (in NBTList form) contains an item that matches the search parameters (id, name, data).
-     */
-    public static void checkInventoryNBT(NbtList nbt, String name, BlockPos pos) {
-        for (NbtElement item : nbt) {
-            NbtCompound compound = (NbtCompound) item;
-            String id = compound.getString("id");
-
-            //If item has NBT data, see if it contains any items within it.
-            checkNested(id, compound.copy(), name, pos);
-            ItemStack stack = ItemStack.fromNbt(compound);
-
-            switch (searchType) {
-                case 0 -> {
-                    if (!id.equals(searchString)) continue;
-                }
-                case 1 -> {
-                    if (!stack.getName().getString().toLowerCase().contains(searchString)) continue;
-                }
-                case 2 -> {
-                    if (nbt.toString().toLowerCase().contains(searchString)) continue;
-                }
-            }
-            results.add(new SearchResult(name, pos, stack));
-            return;
+            results.add(new SearchResult(name, pos, stack.get()));
         }
     }
 
     /**
-     * Calls nested inventory check for found bundles & shulker boxes.
+     * If given inventory (in NBT form) contains an item stack that matches the search parameters (id/name/data), returns that item stack.
      */
-    public static void checkNested(String id, NbtCompound nbt, String name, BlockPos pos) {
+    public static Optional<ItemStack> checkInventoryNBT(NbtList list) {
+        for (NbtElement item : list) {
+            NbtCompound nbt = (NbtCompound) item;
+            String id = nbt.getString("id");
+
+            //If item has NBT data, see if it contains any items within it.
+            Optional<ItemStack> stack = checkNestedNBT(id, nbt.copy());
+            if (stack.isPresent()) return stack;
+
+            switch (searchType) {
+                case 0 -> {
+                    if (!nbt.getString("id").replace("minecraft:", "").equals(searchString)) continue;
+                }
+                case 1 -> {
+                    if (!nbt.getCompound("tag").getCompound("display").getString("Name").toLowerCase()
+                            .contains(searchString)) continue;
+                }
+                case 2 -> {
+                    if (!nbt.toString().toLowerCase().contains(searchString.toLowerCase())) continue;
+                }
+            }
+            return Optional.of(ItemStack.fromNbt(player.getRegistryManager(), nbt).orElse(ERROR_STACK));
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Calls nested inventory check for found bundles & shulker boxes (in Data Component form).
+     */
+    @SuppressWarnings("DataFlowIssue")
+    private static Optional<ItemStack> checkNested(String id, ComponentMap map) {
+        if (id.contains("bundle") && map.contains(DataComponentTypes.BUNDLE_CONTENTS)) {
+            return checkInventory(((BundleContentsComponentMixin) (Object) map.get(DataComponentTypes.BUNDLE_CONTENTS)).getStacks(),
+                    searchType, searchString);
+        }
+        else if (id.contains("shulker_box")) {
+            return checkInventory(((ContainerComponentMixin) (Object) map.get(DataComponentTypes.CONTAINER)).getStacks(),
+                    searchType, searchString);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Calls nested inventory check for found bundles & shulker boxes (in NBT form).
+     */
+    public static Optional<ItemStack> checkNestedNBT(String id, NbtCompound nbt) {
         if (nbt.contains("tag")) nbt = nbt.getCompound("tag");
 
-        if (id.contains("bundle"))
-            checkInventoryNBT(nbt.getList("Items", 10), name, pos);
-        else if (id.contains("shulker_box"))
-            checkInventoryNBT(nbt.getCompound("BlockEntityTag").getList("Items", 10), name, pos);
+        if (id.contains("bundle")) return checkInventoryNBT(nbt.getList("Items", 10));
+        else if (id.contains("shulker_box")) return checkInventoryNBT(nbt.getCompound("BlockEntityTag").getList("Items", 10));
+        return Optional.empty();
     }
 
     /**
@@ -407,10 +437,10 @@ public class ItemFinder {
      */
     @SuppressWarnings("unused")
     public static CompletableFuture<Suggestions> getSuggestions(CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
+        String input = builder.getInput().toLowerCase().replace("/finditem id ", "").replace(" global", "");
         Registries.ITEM.forEach(item -> {
             String name = Registries.ITEM.getId(item).getPath();
-            if (name.contains(builder.getInput().toLowerCase().replace("/finditem id ", "").replace(" global", "")))
-                builder.suggest(name);
+            if (name.contains(input)) builder.suggest(name);
         });
         return builder.buildFuture();
     }

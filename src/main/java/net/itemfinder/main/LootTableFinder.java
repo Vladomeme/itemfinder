@@ -7,13 +7,14 @@ import net.itemfinder.main.config.IFConfig;
 import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.*;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.loot.LootDataType;
+import net.minecraft.loot.LootTable;
+import net.minecraft.loot.LootTables;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
-import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.chunk.WorldChunk;
@@ -42,7 +43,7 @@ public class LootTableFinder {
         ServerWorld world = context.getSource().getWorld();
 
         //find matches in all loaded lootable block entities
-        ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
+        ((ServerChunkLoadingManagerMixin) world.getChunkManager().chunkLoadingManager)
                 .entryIterator().forEach(chunkHolder -> {
                     WorldChunk chunk = chunkHolder.getWorldChunk();
                     if (chunk != null) chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(
@@ -105,7 +106,7 @@ public class LootTableFinder {
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
 
             //Check loaded chunks first to avoid loading their data again, remove their positions from queue.
-            ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
+            ((ServerChunkLoadingManagerMixin) world.getChunkManager().chunkLoadingManager)
                     .entryIterator().forEach(chunkHolder -> {
                         WorldChunk chunk = chunkHolder.getWorldChunk();
                         if (chunk == null || !chunkHolder.isAccessible()) return;
@@ -127,7 +128,7 @@ public class LootTableFinder {
                 CompletableFuture<Void> future = new CompletableFuture<>();
                 futures.add(future);
 
-                CompletableFuture<Optional<NbtCompound>> chunkNBT = world.getChunkManager().threadedAnvilChunkStorage.getNbt(pos);
+                CompletableFuture<Optional<NbtCompound>> chunkNBT = world.getChunkManager().chunkLoadingManager.getNbt(pos);
                 scanExecutor.submit(() -> {
                     progress.incrementAndGet();
                     Optional<NbtCompound> compound;
@@ -181,31 +182,31 @@ public class LootTableFinder {
     /**
      * Adds a new entry to {@link #results} if given block entity fits the search parameter.
      */
-    public static void checkBlockEntity(String beName, BlockEntity be, String s) {
+    public static void checkBlockEntity(String name, BlockEntity be, String s) {
         blockCount.incrementAndGet();
 
         if (!(be instanceof LootableContainerBlockEntity)) return;
-        Identifier lootTable = ((LootableContainerBlockEntityMixin) be).getLootTable();
+        RegistryKey<LootTable> lootTableKey = ((LootableContainerBlockEntityMixin) be).getLootTable();
         switch (s) {
             //Check if block entity has any loot table
             case "any" -> {
-                if (lootTable != null)
-                    results.add(new SearchResult(beName, be.getPos(), lootTable.getPath()));
+                if (lootTableKey != null)
+                    results.add(new SearchResult(name, be.getPos(), lootTableKey.getValue().getPath()));
             }
             //Check if block entity doesn't have a loot table
             case "none" -> {
-                if (lootTable == null)
-                    results.add(new SearchResult(beName, be.getPos(), ""));
+                if (lootTableKey == null)
+                    results.add(new SearchResult(name, be.getPos(), ""));
             }
             //Check if block entity doesn't have a loot table and has an empty inventory
             case "none_empty" -> {
-                if (lootTable == null && ((LootableContainerBlockEntity) be).isEmpty())
-                    results.add(new SearchResult(beName, be.getPos(), ""));
+                if (lootTableKey == null && ((LootableContainerBlockEntity) be).isEmpty())
+                    results.add(new SearchResult(name, be.getPos(), ""));
             }
             //Check if block entity has the right loot table
             default -> {
-                if (lootTable != null && lootTable.getPath().equals(s))
-                    results.add(new SearchResult(beName, be.getPos(), lootTable.getPath()));
+                if (lootTableKey != null && lootTableKey.getValue().getPath().equals(s))
+                    results.add(new SearchResult(name, be.getPos(), lootTableKey.getValue().getPath()));
             }
         }
     }
@@ -289,6 +290,7 @@ public class LootTableFinder {
     /**
      * Returns item IDs for `/finditem loot_table` autocompletion. Vanilla loot tables are included according to current config.
      */
+    @SuppressWarnings("unused")
     public static CompletableFuture<Suggestions> getSuggestions(CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
         String input = builder.getInput().toLowerCase().replace("/finditem loot_table ", "").replace(" global", "").replace("\"", "");
 
@@ -296,15 +298,15 @@ public class LootTableFinder {
         if ("none".contains(input)) builder.suggest("none");
         if ("none_empty".contains(input)) builder.suggest("none_empty");
 
-        context.getSource().getServer().getLootManager().getIds(LootDataType.LOOT_TABLES).forEach(id -> {
-                    String name = id.getPath();
-                    if (!name.contains(input)) return;
-                    if (name.startsWith("archaeology") || name.startsWith("blocks") || name.startsWith("entities")
-                            || name.startsWith("equipment") || name.startsWith("gameplay") || name.startsWith("pots")
-                            || name.startsWith("shearing") || name.startsWith("spawners")) return;
-                    if (!IFConfig.INSTANCE.suggestVanillaLootTables && (name.startsWith("chests") || name.startsWith("dispensers"))) return;
-                    builder.suggest("\"" + name + "\"");
-                });
+        LootTables.getAll().forEach(registryKey -> {
+            String name = registryKey.getValue().getPath();
+            if (!name.contains(input)) return;
+            if (name.startsWith("archaeology") || name.startsWith("blocks") || name.startsWith("entities")
+                    || name.startsWith("equipment") || name.startsWith("gameplay") || name.startsWith("pots")
+                    || name.startsWith("shearing") || name.startsWith("spawners")) return;
+            if (!IFConfig.INSTANCE.suggestVanillaLootTables && (name.startsWith("chests") || name.startsWith("dispensers"))) return;
+            builder.suggest("\"" + name + "\"");
+        });
         return builder.buildFuture();
     }
 

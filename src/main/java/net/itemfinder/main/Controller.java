@@ -60,13 +60,13 @@ public class Controller {
      */
     public static List<Long> getChunkPositions(ServerWorld world) {
         RegionBasedStorageMixin storage = (RegionBasedStorageMixin) (Object)
-                ((StorageIOWorkerMixin) world.getChunkManager().threadedAnvilChunkStorage.getWorker()).getStorage();
+                ((StorageIOWorkerMixin) world.getChunkManager().chunkLoadingManager.getWorker()).getStorage();
         assert storage != null;
 
         List<Long> positions = new ArrayList<>();
         try {
             for (File file : storage.getDirectory().toFile().listFiles()) {
-                RegionFile regionFile = new RegionFile(file.toPath(), storage.getDirectory(), storage.getDsync());
+                RegionFile regionFile = new RegionFile(storage.getStorageKey(), file.toPath(), storage.getDirectory(), storage.getDsync());
                 IntBuffer buffer = ((RegionFileMixin) regionFile).getSectorData().duplicate();
 
                 String[] split = file.getName().split("\\.", 4);

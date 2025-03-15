@@ -7,17 +7,18 @@
     "defaultRequire": 1
   },
   "mixins": [
-    "AbstractFurnaceBlockEntityMixin",
-    "BrewingStandBlockEntityMixin",
+    "BundleContentsComponentMixin",
     "ChiseledBookshelfBlockEntityMixin",
+    "ContainerComponentMixin",
     "EntityMixin",
     "ItemDisplayEntityMixin",
+    "LockableContainerBlockEntityMixin",
     "LootableContainerBlockEntityMixin",
     "RegionBasedStorageMixin",
     "RegionFileMixin",
+    "ServerChunkLoadingManagerMixin",
     "ServerEntityManagerMixin",
     "ServerWorldMixin",
-    "StorageIOWorkerMixin",
-    "ThreadedAnvilChunkStorageMixin"
+    "StorageIOWorkerMixin"
   ]
 }

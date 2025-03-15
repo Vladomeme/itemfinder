@@ -10,8 +10,11 @@ import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.component.ComponentMap;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
+import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
@@ -34,7 +37,7 @@ public class IFMod implements ModInitializer {
 
             @Override
             public Identifier getFabricId() {
-                return new Identifier("itemfinder", "assets");
+                return Identifier.of("itemfinder", "assets");
             }
 
             @Override
@@ -57,6 +60,9 @@ public class IFMod implements ModInitializer {
         });
 
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> Controller.shutdown());
+
+        ItemFinder.ERROR_STACK.applyComponentsFrom(ComponentMap.builder()
+                .add(DataComponentTypes.CUSTOM_NAME, Text.of("Unknown")).build());
 
         LOGGER.info("Item Finder loaded!");
     }
@@ -88,7 +94,8 @@ public class IFMod implements ModInitializer {
                                 .suggests(LootTableFinder::getSuggestions)
                                 .executes(context -> LootTableFinder.search(StringArgumentType.getString(context, "name").toLowerCase(), context))
                                         .then(literal("global")
-                                        .executes(context -> LootTableFinder.prepareGlobalSearch(StringArgumentType.getString(context, "name"), context)))))
+                                        .executes(context -> LootTableFinder.prepareGlobalSearch(StringArgumentType.getString(context, "name"), context))
+                        )))
                         .then(literal("stop")
                                 .executes(Controller::stop))
                         .then(literal("confirm")
