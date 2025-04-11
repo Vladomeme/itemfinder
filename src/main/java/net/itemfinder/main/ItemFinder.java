@@ -1,19 +1,19 @@
 package net.itemfinder.main;
 
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.itemfinder.main.config.IFConfig;
 import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.*;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
@@ -21,6 +21,7 @@ import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.*;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
@@ -37,6 +38,7 @@ import java.util.stream.Collectors;
 
 import static net.itemfinder.main.Controller.*;
 
+@Environment(EnvType.SERVER)
 public class ItemFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
@@ -45,12 +47,13 @@ public class ItemFinder {
      * Runs a normal item search. Called via `/finditem id/name/data` without global modifier.
      */
     @SuppressWarnings("SameReturnValue")
-    public static int search(int type, String s, CommandContext<ServerCommandSource> context) {
-        player = context.getSource().getPlayer();
+    public static int search(int type, String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity player = getSourcePlayer(context);
         if (searching.get()) {
             player.sendMessage(Text.of("Search already in progress..."));
             return 1;
         }
+        currentUser = player;
         ServerWorld world = context.getSource().getWorld();
 
         //find matches in all loaded block entities with storage
@@ -63,7 +66,7 @@ public class ItemFinder {
         //find matches in all loaded storage-entities
         world.iterateEntities().forEach(entity -> checkEntity(entity, type, s));
 
-        sendResults(Objects.requireNonNull(context.getSource().getPlayer()));
+        sendResults();
         return 1;
     }
 
@@ -72,22 +75,24 @@ public class ItemFinder {
      * Asks for confirmation according to current config.
      */
     @SuppressWarnings("SameReturnValue")
-    public static int prepareGlobalSearch(int type, String s, CommandContext<ServerCommandSource> context) {
+    public static int prepareGlobalSearch(int type, String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         if (searching.get()) {
-            Objects.requireNonNull(context.getSource().getPlayer()).sendMessage(Text.of("Search already in progress..."));
+            getSourcePlayer(context).sendMessage(
+                    Text.of("Search is already active (" + (System.nanoTime() - startTime) / 1000000000
+                            + "s., requested by " + currentUser.getGameProfile().getName()));
             return 1;
         }
 
         //Set all scan parameters
         searchType = type;
         searchString = s.toLowerCase();
-        player = Objects.requireNonNull(context.getSource().getPlayer());
+        currentUser = getSourcePlayer(context);
         itemSearchRequested = true;
 
         if (IFConfig.INSTANCE.autoConfirm) globalSearch();
         else {
-            player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
-            player.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
+            currentUser.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
+            currentUser.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
                     .withColor(Formatting.AQUA)
                     .withUnderline(true)
                     .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))));
@@ -96,46 +101,29 @@ public class ItemFinder {
     }
 
     /**
-     * Runs a global item search.
+     * Runs a global item search by retrieving positions of all generated chunks and reading their NBT data.
      */
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
-        if (!itemSearchRequested) {
-            if (player != null) player.sendMessage(Text.of("nothing to confirm..."));
-            return;
-        }
         itemSearchRequested = false;
         searching.set(true);
 
-        long start = System.nanoTime();
+        startTime = System.nanoTime();
 
         scanExecutor.submit(() -> {
-            ServerWorld world = (ServerWorld) player.getWorld();
+            ServerWorld world = (ServerWorld) currentUser.getWorld();
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
-            player.sendMessage(Text.of("Checking " + chunkCount + " chunks..."));
+            currentUser.sendMessage(Text.of("Checking " + chunkCount + " chunks..."));
             AtomicInteger progress = new AtomicInteger(0);
 
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
 
-            //Check loaded chunks first to avoid loading their data again, remove their positions from queue.
-            ((ThreadedAnvilChunkStorageMixin) world.getChunkManager().threadedAnvilChunkStorage)
-                    .entryIterator().forEach(chunkHolder -> {
-                        WorldChunk chunk = chunkHolder.getWorldChunk();
-                        if (chunk == null || !chunkHolder.isAccessible()) return;
-
-                        chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(chunk.getBlockState(be.getPos()).getBlock().getName().getString(),
-                                be, searchType, searchString));
-                        chunkPositions.remove(chunk.getPos().toLong());
-                        progress.incrementAndGet();
-                    });
-            world.iterateEntities().forEach(entity -> checkEntity(entity, searchType, searchString));
-
-            //Iterating through all generated, unloaded chunks, extracting their block entity & entity data.
+            //Iterating through all generated chunks, extracting their block entity & entity data.
             for (Long position : chunkPositions) {
                 if (!searching.get()) {
-                    sendResults(player);
+                    sendResults();
                     break;
                 }
                 ChunkPos pos = new ChunkPos((int) (position >> 32), position.intValue());
@@ -170,7 +158,7 @@ public class ItemFinder {
                         nbtData.getList("block_entities", 10).forEach(nbtElement -> checkBlockEntityNBT((NbtCompound) nbtElement));
                     }
                     catch (Throwable e) {
-                        IFMod.LOGGER.error("Failed to deserialize chunk {} with data of size {}", pos, nbtData.getSize());
+                        IFMod.LOGGER.error("Failed to deserialize chunk {} with data of size {}. Ignore if search finishes.", pos, nbtData.getSize());
                         future.complete(null);
                         throw e;
                     }
@@ -195,11 +183,11 @@ public class ItemFinder {
                         entities.stream().forEach(entity -> checkEntity(entity, searchType, searchString));
                     }
                     catch (Throwable e) {
-                        IFMod.LOGGER.error("Failed to deserialize entity chunk {}", pos);
+                        IFMod.LOGGER.error("Failed to deserialize entity chunk {}. Ignore if search finishes.", pos);
                         future.complete(null);
                         throw e;
                     }
-                    player.sendMessage(Text.literal("Progress: " + progress.get() + "/" + chunkCount + ".")
+                    currentUser.sendMessage(Text.literal("Progress: " + progress.get() + "/" + chunkCount + ".")
                             .setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
                     future.complete(null);
                 });
@@ -208,14 +196,14 @@ public class ItemFinder {
             try {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
-                sendResults(player);
-                player.sendMessage(Text.literal("Finished in " + (System.nanoTime() - start) / 1000000000 + "s.")
+                sendResults();
+                currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
                         .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
                 searching.set(false);
             }
             catch (Throwable e) {
                 searching.set(false);
-                IFMod.LOGGER.error("Scan crashed!! Congratulations", e);
+                IFMod.LOGGER.error("Scan crashed!! Congratulations :)", e);
                 throw new RuntimeException(e);
             }
         });
@@ -316,7 +304,7 @@ public class ItemFinder {
 
             switch (searchType) {
                 case 0 -> {
-                    if (!id.equals(searchString)) continue;
+                    if (!id.substring(id.indexOf(':') + 1).equals(searchString)) continue;
                 }
                 case 1 -> {
                     if (!stack.getName().getString().toLowerCase().contains(searchString)) continue;
@@ -345,16 +333,16 @@ public class ItemFinder {
     /**
      * Prints out search results with search stats & teleportation commands.
      */
-    public static void sendResults(PlayerEntity player) {
-        player.sendMessage(Text.of("/-----------------------------/"));
-        player.sendMessage(Text.of("Blocks/entities searched: " + blockCount + "/" + entityCount));
-        player.sendMessage(Text.of("Matching results: " + results.size() +
+    public static void sendResults() {
+        currentUser.sendMessage(Text.of("/-----------------------------/"));
+        currentUser.sendMessage(Text.of("Blocks/entities searched: " + blockCount + "/" + entityCount));
+        currentUser.sendMessage(Text.of("Matching results: " + results.size() +
                 (results.isEmpty() ? " :(" : "")));
 
         //format: 1. <block/entity name> [x, y, z]
         int i = 0;
-        for (SearchResult result : results) player.sendMessage(makeMessage(++i, result.name(), result.pos(), result.stack()));
-        player.sendMessage(Text.of("/-----------------------------/"));
+        for (SearchResult result : results) currentUser.sendMessage(makeMessage(++i, result.name(), result.pos(), result.stack()));
+        currentUser.sendMessage(Text.of("/-----------------------------/"));
 
         reset();
     }
@@ -375,31 +363,6 @@ public class ItemFinder {
                                 .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/tp " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
                                 .withColor(Formatting.AQUA)
                                 .withUnderline(true)));
-    }
-
-    /**
-     * Starts an item search with parameters taken from a currently held item. Search mode depends on the config.
-     * Normal and Global modes are called with the corresponding keybinds.
-     */
-    public static void searchHandheld(boolean global) {
-        //noinspection StatementWithEmptyBody
-        while (IFMod.handSearchKey.wasPressed());
-        player = MinecraftClient.getInstance().player;
-        if (player == null || !player.isCreative()) return;
-
-        ItemStack stack = player.getMainHandStack();
-        if (stack == ItemStack.EMPTY) return;
-
-        String s = switch (IFConfig.INSTANCE.handSearchMode) {
-            case Id -> player.getMainHandStack().getItem().toString();
-            case Name -> player.getMainHandStack().getName().getString().toLowerCase();
-        };
-        String mode = IFConfig.INSTANCE.handSearchMode.getDisplayName().getString();
-
-        player.sendMessage(Text.literal("Searching for " + s).setStyle(Style.EMPTY.withColor(Formatting.YELLOW)));
-
-        ClientPlayNetworkHandler handler = MinecraftClient.getInstance().getNetworkHandler();
-        if (handler != null) handler.sendCommand("finditem " + mode + " \"" + s + (global ? "\" global" : "\""));
     }
 
     /**

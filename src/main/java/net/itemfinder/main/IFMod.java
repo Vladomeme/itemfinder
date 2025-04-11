@@ -1,67 +1,25 @@
 package net.itemfinder.main;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
-import net.fabricmc.api.ModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.api.DedicatedServerModInitializer;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
-import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.resource.ResourceManager;
-import net.minecraft.resource.ResourceType;
-import net.minecraft.util.Identifier;
-import org.lwjgl.glfw.GLFW;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
+import net.itemfinder.main.config.IFConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
-public class IFMod implements ModInitializer {
+@Environment(EnvType.SERVER)
+public class IFMod implements DedicatedServerModInitializer {
 
     public static final Logger LOGGER = LoggerFactory.getLogger("itemfinder");
 
-    public static KeyBinding teleportKey;
-    public static KeyBinding handSearchKey;
-    public static KeyBinding handGlobalSearchKey;
-
     @Override
-    public void onInitialize() {
-        ResourceManagerHelper.get(ResourceType.CLIENT_RESOURCES).registerReloadListener(new SimpleSynchronousResourceReloadListener() {
-
-            @Override
-            public Identifier getFabricId() {
-                return new Identifier("itemfinder", "assets");
-            }
-
-            @Override
-            public void reload(ResourceManager manager) {
-                addCommand();
-            }
-        });
-
-        teleportKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Teleport to next result",
-                InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_N, "Item Finder"));
-        handSearchKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Search for held item",
-                InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, "Item Finder"));
-        handGlobalSearchKey = KeyBindingHelper.registerKeyBinding(new KeyBinding("Global search for held item",
-                InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_UNKNOWN, "Item Finder"));
-
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            if (teleportKey.wasPressed()) Controller.teleportToNext();
-            if (handSearchKey.wasPressed()) ItemFinder.searchHandheld(false);
-            if (handGlobalSearchKey.wasPressed()) ItemFinder.searchHandheld(true);
-        });
-
-        ClientLifecycleEvents.CLIENT_STOPPING.register(client -> Controller.shutdown());
-
-        LOGGER.info("Item Finder loaded!");
-    }
-
-    public void addCommand() {
+    public void onInitializeServer() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
                 literal("finditem")
                         .then(literal("id")
@@ -91,7 +49,14 @@ public class IFMod implements ModInitializer {
                                         .executes(context -> LootTableFinder.prepareGlobalSearch(StringArgumentType.getString(context, "name"), context)))))
                         .then(literal("stop")
                                 .executes(Controller::stop))
+                        .then(literal("next")
+                                .executes((Controller::teleportToNext)))
                         .then(literal("confirm")
-                                .executes(context -> Controller.confirm()))));
+                                .executes(Controller::confirm))));
+
+        ServerLifecycleEvents.SERVER_STOPPING.register(client -> {
+            if (!IFConfig.FILE.exists()) IFConfig.INSTANCE.write();
+            Controller.shutdown();
+        });
     }
 }

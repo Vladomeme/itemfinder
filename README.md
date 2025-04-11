@@ -1,6 +1,6 @@
 ## About
 Mod allows to search your world for items with selected parameters.  
-Designed to be only used in singleplayer. If installed on a server, some functions may not work.  
+Runs on server side, installing on client is optional.  
 [YetAnotherConfigLib](https://modrinth.com/mod/yacl) for config.  
   
 Works on:
