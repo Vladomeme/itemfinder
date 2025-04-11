@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "itemfinder",
+  "id": "item-finder",
   "version": "${version}",
 
   "name": "Item Finder",
@@ -16,8 +16,11 @@
 
   "environment": "*",
   "entrypoints": {
-    "main": [
-      "net.itemfinder.main.IFMod"
+    "client": [
+      "net.itemfinder.main.IFModClient::onInitializeClient"
+    ],
+    "server": [
+      "net.itemfinder.main.IFMod::onInitializeServer"
     ],
     "modmenu": [
       "net.itemfinder.main.config.IFModMenu"

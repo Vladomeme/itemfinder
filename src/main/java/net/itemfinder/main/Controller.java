@@ -1,12 +1,13 @@
 package net.itemfinder.main;
 
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.itemfinder.main.mixin.RegionBasedStorageMixin;
 import net.itemfinder.main.mixin.RegionFileMixin;
 import net.itemfinder.main.mixin.StorageIOWorkerMixin;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -19,12 +20,16 @@ import net.minecraft.world.storage.RegionFile;
 import java.io.File;
 import java.io.IOException;
 import java.nio.IntBuffer;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@Environment(EnvType.SERVER)
 public class Controller {
 
     static int threadCount = 0;
@@ -33,17 +38,17 @@ public class Controller {
     static boolean itemSearchRequested = false;
     static boolean lootTableSearchRequested = false;
     static final AtomicBoolean searching = new AtomicBoolean(false);
+    static long startTime;
     static int chunkCount;
     static int searchType;
     static String searchString = "";
-    static PlayerEntity player;
+    static ServerPlayerEntity currentUser;
 
     static final AtomicInteger blockCount = new AtomicInteger(0);
     static final AtomicInteger entityCount = new AtomicInteger(0);
 
-    static final List<BlockPos> coordinates = new ArrayList<>();
-    static int currentPosition = 1;
-
+    static final Map<String, List<BlockPos>> coordinates = new HashMap<>();
+    static final Map<String, Integer> currentPositions = new HashMap<>();
 
     /**
      * Used to create threads for the {@link #scanExecutor}.
@@ -90,39 +95,47 @@ public class Controller {
      * Called via command `/finditem confirm`, used to start global search when confirmation is required by current config.
      */
     @SuppressWarnings("SameReturnValue")
-    public static int confirm() {
+    public static int confirm(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity source = getSourcePlayer(context);
+        if (source != currentUser) source.sendMessage(Text.of("Current search request was made by another player."));
+
         if (itemSearchRequested) ItemFinder.globalSearch();
         else if (lootTableSearchRequested) LootTableFinder.globalSearch();
+        else source.sendMessage(Text.of("No search request found."));
         return 1;
     }
 
     /**
-     * Teleports the player to next search result. Called via a keybind.
-     * Search results are stored in {@link #coordinates}, current position - {@link #currentPosition}.
+     * Teleports the player to next search result. Called using `/finditem next`.
+     * Search results are stored in {@link #coordinates}, current position - {@link #currentPositions}.
      */
-    public static void teleportToNext() {
-        //noinspection StatementWithEmptyBody
-        while (IFMod.teleportKey.wasPressed());
-        ClientPlayNetworkHandler nh = MinecraftClient.getInstance().getNetworkHandler();
-        if (nh == null || player == null || !(player.isCreative() || player.isSpectator())) return;
-
-        if (coordinates.isEmpty() || currentPosition > coordinates.size()) {
-            player.sendMessage(Text.of("No search results in teleport queue!"));
-            return;
+    @SuppressWarnings("SameReturnValue")
+    public static int teleportToNext(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity player = getSourcePlayer(context);
+        if (!(player.isCreative() || player.isSpectator())) {
+            throw new SimpleCommandExceptionType(Text.of("Command can only be used in creative and spectator mode.")).create();
         }
-        BlockPos pos = coordinates.get(currentPosition - 1);
-        nh.sendCommand("tp " + pos.getX() + " " + pos.getY() + " " + pos.getZ());
-        player.sendMessage(Text.literal("Teleporting to result " + currentPosition + "/" + coordinates.size())
+        String playerName = player.getGameProfile().getName();
+        List<BlockPos> playerCoordinates = coordinates.get(playerName);
+        Integer currentPosition = currentPositions.get(playerName);
+        if (playerCoordinates == null || playerCoordinates.isEmpty() || currentPosition > playerCoordinates.size()) {
+            player.sendMessage(Text.of("No search results in teleport queue!"));
+            return 1;
+        }
+        BlockPos pos = playerCoordinates.get(currentPosition - 1);
+        player.requestTeleport(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
+        player.sendMessage(Text.literal("Teleporting to result " + currentPosition + "/" + playerCoordinates.size())
                 .setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
-        currentPosition++;
+        currentPositions.merge(playerName, 1, Integer::sum);
+        return 1;
     }
 
     /**
      * Used to stop running global search. Called via command `/finditem stop`.
      */
     @SuppressWarnings("SameReturnValue")
-    public static int stop(CommandContext<ServerCommandSource> context) {
-        ServerPlayerEntity player = Objects.requireNonNull(context.getSource().getPlayer());
+    public static int stop(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity player = getSourcePlayer(context);
         player.sendMessage(Text.of(searching.get() ? "Search interrupted." : "why... search wasn't running..."));
 
         reset();
@@ -136,10 +149,20 @@ public class Controller {
         searching.set(false);
         blockCount.set(0);
         entityCount.set(0);
-        coordinates.clear();
-        ItemFinder.results.forEach(result -> coordinates.add(result.pos()));
-        LootTableFinder.results.forEach(result -> coordinates.add(result.pos()));
-        currentPosition = 1;
+        itemSearchRequested = false;
+        lootTableSearchRequested = false;
+
+        String playerName = currentUser.getGameProfile().getName();
+        List<BlockPos> playerCoordinates = coordinates.get(playerName);
+        if (playerCoordinates == null) {
+            playerCoordinates = new ArrayList<>();
+            coordinates.put(playerName, playerCoordinates);
+        }
+        else playerCoordinates.clear();
+        for (ItemFinder.SearchResult result : ItemFinder.results) playerCoordinates.add(result.pos());
+        for (LootTableFinder.SearchResult result : LootTableFinder.results) playerCoordinates.add(result.pos());
+        currentPositions.put(playerName, 1);
+
         ItemFinder.results.clear();
         LootTableFinder.results.clear();
     }
@@ -149,5 +172,12 @@ public class Controller {
      */
     public static void shutdown() {
         scanExecutor.shutdown();
+    }
+
+    /**
+     * Makes sure the commands are called by a player and returns that player from command context.
+     */
+    public static ServerPlayerEntity getSourcePlayer(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        return context.getSource().getPlayerOrThrow();
     }
 }
