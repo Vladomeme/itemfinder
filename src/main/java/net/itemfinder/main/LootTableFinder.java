@@ -1,17 +1,23 @@
 package net.itemfinder.main;
 
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.itemfinder.main.config.IFConfig;
-import net.itemfinder.main.mixin.*;
-import net.minecraft.block.entity.*;
-import net.minecraft.entity.player.PlayerEntity;
+import net.itemfinder.main.mixin.LootableContainerBlockEntityMixin;
+import net.itemfinder.main.mixin.ServerChunkLoadingManagerMixin;
+import net.minecraft.block.entity.BlockEntity;
+import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.block.entity.LootableContainerBlockEntity;
 import net.minecraft.loot.LootTable;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.resource.ResourceManager;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.*;
 import net.minecraft.util.Formatting;
@@ -26,6 +32,7 @@ import java.util.stream.Collectors;
 
 import static net.itemfinder.main.Controller.*;
 
+@Environment(EnvType.SERVER)
 public class LootTableFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
@@ -35,12 +42,13 @@ public class LootTableFinder {
      * Runs a normal loot table search. Called via `/finditem loot_table` without global modifier.
      */
     @SuppressWarnings("SameReturnValue")
-    public static int search(String s, CommandContext<ServerCommandSource> context) {
-        player = context.getSource().getPlayer();
+    public static int search(String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity source = getSourcePlayer(context);
         if (searching.get()) {
-            player.sendMessage(Text.of("Search already in progress..."), false);
+            source.sendMessage(Text.of("Search already in progress..."));
             return 1;
         }
+        currentUser = source;
         ServerWorld world = context.getSource().getWorld();
 
         //find matches in all loaded lootable block entities
@@ -51,7 +59,7 @@ public class LootTableFinder {
                             chunk.getBlockState(be.getPos()).getBlock().getName().getString(), be, s));
                 });
 
-        sendResults(Objects.requireNonNull(context.getSource().getPlayer()));
+        sendResults();
         return 1;
     }
 
@@ -60,68 +68,54 @@ public class LootTableFinder {
      * Asks for confirmation according to current config.
      */
     @SuppressWarnings("SameReturnValue")
-    public static int prepareGlobalSearch(String s, CommandContext<ServerCommandSource> context) {
+    public static int prepareGlobalSearch(String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         if (searching.get()) {
-            Objects.requireNonNull(context.getSource().getPlayer()).sendMessage(Text.of("Search already in progress..."));
+            getSourcePlayer(context).sendMessage(
+                    Text.of("Search is already active (" + (System.nanoTime() - startTime) / 1000000000
+                            + "s., requested by " + currentUser.getGameProfile().getName()));
             return 1;
         }
 
         //Set all scan parameters
         searchString = s.toLowerCase();
-        player = Objects.requireNonNull(context.getSource().getPlayer());
+        currentUser = getSourcePlayer(context);
         lootTableSearchRequested = true;
 
         if (IFConfig.INSTANCE.autoConfirm) globalSearch();
         else {
-            player.sendMessage(Text.of("Starting a full-world scan. Are you sure?"), false);
-            player.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
+            currentUser.sendMessage(Text.of("Starting a full-world scan. Are you sure?"));
+            currentUser.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
                     .withColor(Formatting.AQUA)
                     .withUnderline(true)
-                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))), false);
+                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))));
         }
         return 1;
     }
 
     /**
-     * Runs a global item search.
+     * Runs a global item search by retrieving positions of all generated chunks and reading their NBT data.
      */
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
-        if (!lootTableSearchRequested) {
-            if (player != null) player.sendMessage(Text.of("nothing to confirm..."), false);
-            return;
-        }
         lootTableSearchRequested = false;
         searching.set(true);
 
-        long start = System.nanoTime();
+        startTime = System.nanoTime();
 
         scanExecutor.submit(() -> {
-            ServerWorld world = (ServerWorld) player.getWorld();
+            ServerWorld world = (ServerWorld) currentUser.getWorld();
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
-            player.sendMessage(Text.of("Checking " + chunkCount + " chunks..."), false);
+            currentUser.sendMessage(Text.of("Checking " + chunkCount + " chunks..."));
             AtomicInteger progress = new AtomicInteger(0);
 
             List<CompletableFuture<Void>> futures = Collections.synchronizedList(new ArrayList<>());
 
-            //Check loaded chunks first to avoid loading their data again, remove their positions from queue.
-            ((ServerChunkLoadingManagerMixin) world.getChunkManager().chunkLoadingManager)
-                    .entryIterator().forEach(chunkHolder -> {
-                        WorldChunk chunk = chunkHolder.getWorldChunk();
-                        if (chunk == null || !chunkHolder.isAccessible()) return;
-
-                        chunk.getBlockEntities().values()
-                                .forEach(be -> checkBlockEntity(chunk.getBlockState(be.getPos()).getBlock().getName().getString(), be, searchString));
-                        chunkPositions.remove(chunk.getPos().toLong());
-                        progress.incrementAndGet();
-                    });
-
-            //Iterating through all generated, unloaded chunks, extracting their block entity data.
+            //Iterating through all generated chunks, extracting their block entity data.
             for (Long position : chunkPositions) {
                 if (!searching.get()) {
-                    sendResults(player);
+                    sendResults();
                     break;
                 }
                 ChunkPos pos = new ChunkPos((int) (position >> 32), position.intValue());
@@ -154,11 +148,11 @@ public class LootTableFinder {
                         nbtData.getList("block_entities", 10).forEach(nbtElement -> checkBlockEntityNBT((NbtCompound) nbtElement));
                     }
                     catch (Throwable e) {
-                        IFMod.LOGGER.error("Failed to deserialize chunk {} with data of size {}", pos, nbtData.getSize());
+                        IFMod.LOGGER.error("Failed to deserialize chunk {} with data of size {}. Ignore if search finishes.", pos, nbtData.getSize());
                         future.complete(null);
                         throw e;
                     }
-                    player.sendMessage(Text.literal("Progress: " + progress.get() + "/" + chunkCount + ".")
+                    currentUser.sendMessage(Text.literal("Progress: " + progress.get() + "/" + chunkCount + ".")
                             .setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
                     future.complete(null);
                 });
@@ -167,9 +161,9 @@ public class LootTableFinder {
             try {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
-                sendResults(player);
-                player.sendMessage(Text.literal("Finished in " + (System.nanoTime() - start) / 1000000000 + "s.")
-                        .setStyle(Style.EMPTY.withColor(Formatting.AQUA)), false);
+                sendResults();
+                currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
+                        .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
                 searching.set(false);
             }
             catch (Throwable e) {
@@ -249,8 +243,11 @@ public class LootTableFinder {
                     results.add(new SearchResult(name, pos, ""));
             }
             default -> {
-                if (nbt.contains("LootTable") && nbt.getString("LootTable").split(":")[1].equals(searchString))
-                    results.add(new SearchResult(name, pos, ""));
+                if (nbt.contains("LootTable")) {
+                    String lootTable = nbt.getString("LootTable");
+                    if (lootTable.substring(lootTable.indexOf(':') + 1).equals(searchString))
+                        results.add(new SearchResult(name, pos, ""));
+                }
             }
         }
     }
@@ -258,16 +255,16 @@ public class LootTableFinder {
     /**
      * Prints out search results with search stats & teleportation commands.
      */
-    public static void sendResults(PlayerEntity player) {
-        player.sendMessage(Text.of("/-----------------------------/"), false);
-        player.sendMessage(Text.of("Blocks searched: " + blockCount), false);
-        player.sendMessage(Text.of("Matching results: " + results.size() +
-                (results.isEmpty() ? " :(" : "")), false);
+    public static void sendResults() {
+        currentUser.sendMessage(Text.of("/-----------------------------/"));
+        currentUser.sendMessage(Text.of("Blocks searched: " + blockCount));
+        currentUser.sendMessage(Text.of("Matching results: " + results.size() +
+                (results.isEmpty() ? " :(" : "")));
 
         //format: 1. <block name> [x, y, z]
         int i = 0;
-        for (SearchResult result : results) player.sendMessage(makeMessage(++i, result.name(), result.pos(), result.lootTable), false);
-        player.sendMessage(Text.of("/-----------------------------/"), false);
+        for (SearchResult result : results) currentUser.sendMessage(makeMessage(++i, result.name(), result.pos(), result.lootTable));
+        currentUser.sendMessage(Text.of("/-----------------------------/"));
 
         reset();
     }
@@ -319,6 +316,7 @@ public class LootTableFinder {
             if (name.startsWith("archaeology") || name.startsWith("blocks") || name.startsWith("entities")
                     || name.startsWith("equipment") || name.startsWith("gameplay") || name.startsWith("pots")
                     || name.startsWith("shearing") || name.startsWith("spawners") || name.startsWith("dispensers")) return false;
+            //noinspection RedundantIfStatement
             if (!IFConfig.INSTANCE.suggestVanillaLootTables && name.startsWith("chests")) return false;
             return true;
         }).forEach((id, resources) -> {
