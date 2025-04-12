@@ -4,8 +4,6 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
-import net.fabricmc.api.EnvType;
-import net.fabricmc.api.Environment;
 import net.itemfinder.main.config.IFConfig;
 import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.BlockEntity;
@@ -48,7 +46,6 @@ import java.util.stream.Collectors;
 
 import static net.itemfinder.main.Controller.*;
 
-@Environment(EnvType.SERVER)
 public class ItemFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
@@ -313,8 +310,8 @@ public class ItemFinder {
     /**
      * If given inventory (in NBT form) contains an item stack that matches the search parameters (id/name/data), returns that item stack.
      */
-    public static Optional<ItemStack> checkInventoryNBT(NbtList list) {
-        for (NbtElement item : list) {
+    public static Optional<ItemStack> checkInventoryNBT(NbtList inventory) {
+        for (NbtElement item : inventory) {
             NbtCompound nbt = (NbtCompound) item;
             String id = nbt.getString("id");
 
@@ -327,11 +324,15 @@ public class ItemFinder {
                     if (!id.substring(id.indexOf(':') + 1).equals(searchString)) continue;
                 }
                 case 1 -> {
-                    if (nbt.getCompound("tag").getCompound("display").contains("Name")) {
-                        if (!nbt.getCompound("tag").getCompound("display").getString("Name").toLowerCase()
+                    if (nbt.getCompound("components").contains("minecraft:custom_name")) {
+                        if (!nbt.getCompound("components").getString("minecraft:custom_name").toLowerCase()
                                 .contains(searchString)) continue;
                     }
-                    else if (!id.substring(id.indexOf(':') + 1).equals(searchString)) continue;
+                    else if (nbt.getCompound("components").contains("minecraft:item_name")) {
+                        if (!nbt.getCompound("components").getString("minecraft:item_name").toLowerCase()
+                                .contains(searchString)) continue;
+                    }
+                    else if (!id.substring(id.indexOf(':') + 1).contains(searchString)) continue;
                 }
                 case 2 -> {
                     if (!nbt.toString().toLowerCase().contains(searchString.toLowerCase())) continue;

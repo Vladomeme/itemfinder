@@ -1,9 +1,7 @@
 package net.itemfinder.main;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
-import net.fabricmc.api.DedicatedServerModInitializer;
-import net.fabricmc.api.EnvType;
-import net.fabricmc.api.Environment;
+import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.itemfinder.main.config.IFConfig;
@@ -13,13 +11,12 @@ import org.slf4j.LoggerFactory;
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
-@Environment(EnvType.SERVER)
-public class IFMod implements DedicatedServerModInitializer {
+public class IFMod implements ModInitializer {
 
     public static final Logger LOGGER = LoggerFactory.getLogger("itemfinder");
 
     @Override
-    public void onInitializeServer() {
+    public void onInitialize() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> dispatcher.register(
                 literal("finditem")
                         .then(literal("id")

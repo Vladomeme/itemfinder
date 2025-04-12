@@ -3,8 +3,6 @@ package net.itemfinder.main;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
-import net.fabricmc.api.EnvType;
-import net.fabricmc.api.Environment;
 import net.itemfinder.main.mixin.RegionBasedStorageMixin;
 import net.itemfinder.main.mixin.RegionFileMixin;
 import net.itemfinder.main.mixin.StorageIOWorkerMixin;
@@ -29,7 +27,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@Environment(EnvType.SERVER)
 public class Controller {
 
     static int threadCount = 0;
