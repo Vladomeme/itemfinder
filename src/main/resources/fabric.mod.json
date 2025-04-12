@@ -19,8 +19,8 @@
     "client": [
       "net.itemfinder.main.IFModClient::onInitializeClient"
     ],
-    "server": [
-      "net.itemfinder.main.IFMod::onInitializeServer"
+    "main": [
+      "net.itemfinder.main.IFMod::onInitialize"
     ],
     "modmenu": [
       "net.itemfinder.main.config.IFModMenu"

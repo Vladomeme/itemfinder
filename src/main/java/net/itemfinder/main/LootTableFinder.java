@@ -4,8 +4,6 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
-import net.fabricmc.api.EnvType;
-import net.fabricmc.api.Environment;
 import net.itemfinder.main.config.IFConfig;
 import net.itemfinder.main.mixin.LootableContainerBlockEntityMixin;
 import net.itemfinder.main.mixin.ServerChunkLoadingManagerMixin;
@@ -32,7 +30,6 @@ import java.util.stream.Collectors;
 
 import static net.itemfinder.main.Controller.*;
 
-@Environment(EnvType.SERVER)
 public class LootTableFinder {
 
     static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
@@ -168,7 +165,7 @@ public class LootTableFinder {
             }
             catch (Throwable e) {
                 searching.set(false);
-                IFMod.LOGGER.error("Scan crashed!! Congratulations", e);
+                IFMod.LOGGER.error("Scan crashed!! Congratulations :)", e);
                 throw new RuntimeException(e);
             }
         });
