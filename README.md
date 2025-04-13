@@ -22,8 +22,7 @@ Matches items if their name contains argument string, case-insensitive (uses bas
 Multi-word search parameters could be put in quotes like `"monument block"`.  
   
 `/finditem data <data>`  
-Matches items that contain argument string in their NBT (literally everything: name, lore, enchantments, attributes, etc etc).  
-On 1.21: if used in normal mode, checks data components (less flexible). In global uses NBT anyway.
+Matches items that contain argument string in their NBT/data components (literally everything: name, lore, enchantments, attributes, etc etc).  
   
 `/finditem loot_table <loot_table>`  
 Allows searching for lootable block entities (block entities that can have a loot table).  
@@ -35,7 +34,16 @@ Special arguments:
 * `none_empty` - returns all lootable block entities that **do not** have a loot table and **do not** have any items inside.
   
 Vanilla loot tables (and custom loot tables under vanilla paths) should be enabled in the config to be included in command autocomplete options.  
-
+  
+`/finditem next`  
+Teleports the user to next available search result.  
+  
+`/finditem stop`  
+Can be used to stop global search if it breaks and doesn't auto-end for some reason.  
+  
+`/finditem confirm`  
+Internal, used to confirm global searches.  
+  
 ### Search modes
 **Normal** mode only checks currently loaded chunks & entities, runs instantly.  
   
