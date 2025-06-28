@@ -14,6 +14,7 @@ public class IFConfig {
 
     public boolean autoConfirm = false;
     public boolean scanItemDisplays = false;
+    public boolean scanTrades = false;
     public String handSearchMode = "Name";
     public boolean suggestVanillaLootTables = false;
     public boolean onlyShowChestsLootTable = true;

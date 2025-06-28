@@ -18,6 +18,7 @@ import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
 import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
+import net.minecraft.entity.passive.MerchantEntity;
 import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -35,6 +36,8 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.village.TradeOffer;
+import net.minecraft.village.TradeOfferList;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.storage.ChunkDataList;
 import org.jetbrains.annotations.NotNull;
@@ -229,13 +232,30 @@ public class ItemFinder {
         else if (entity instanceof ArmorStandEntity) ((ArmorStandEntity) entity).getEquippedItems().forEach(inventory::add);
         else if (entity instanceof ItemEntity) inventory.add(((ItemEntity) entity).getStack());
         else if (entity instanceof VehicleInventory) inventory.addAll(((VehicleInventory) entity).getInventory());
-        else if (entity instanceof DisplayEntity.ItemDisplayEntity
-                && IFConfig.INSTANCE.scanItemDisplays) inventory.add(((ItemDisplayEntityMixin) entity).getItemStack());
+        else if (entity instanceof DisplayEntity.ItemDisplayEntity && IFConfig.INSTANCE.scanItemDisplays)
+            inventory.add(((ItemDisplayEntityMixin) entity).getItemStack());
+        else if (entity instanceof MerchantEntity && IFConfig.INSTANCE.scanTrades)
+            getTrades((MerchantEntity) entity, inventory);
 
         if (inventory.isEmpty()) return;
 
         checkInventory(inventory, type, s).ifPresent(stack -> results.add(
                 new SearchResult(((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos(), stack)));
+    }
+
+    public static void getTrades(MerchantEntity entity, List<ItemStack> inventory) {
+        TradeOfferList offers = ((MerchantEntityMixin) entity).getOffers();
+        if (offers == null) return;
+
+        for (TradeOffer offer : offers) {
+            ItemStack stack1 = offer.getFirstBuyItem().itemStack();
+            ItemStack stack2 = offer.getSecondBuyItem().isPresent() ? offer.getSecondBuyItem().get().itemStack() : null;
+            ItemStack stack3 = offer.getSellItem();
+
+            inventory.add(stack1);
+            if (stack2 != null && !stack2.getItem().equals(Items.AIR)) inventory.add(stack2);
+            inventory.add(stack3);
+        }
     }
 
     /**

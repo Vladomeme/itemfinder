@@ -30,6 +30,11 @@ public class IFConfigScreen {
                                 .binding(false, () -> config.scanItemDisplays, newVal -> config.scanItemDisplays = newVal)
                                 .controller(TickBoxControllerBuilder::create).build())
 
+                        .option(Option.<Boolean>createBuilder()
+                                .name(Text.literal("Scan villager trades"))
+                                .binding(false, () -> config.scanTrades, newVal -> config.scanTrades = newVal)
+                                .controller(TickBoxControllerBuilder::create).build())
+
                         .option(Option.<HandSearchMode>createBuilder()
                                 .name(Text.literal("Handheld search mode"))
                                 .binding(HandSearchMode.Name, () -> HandSearchMode.valueOf(config.handSearchMode), newVal -> config.handSearchMode = newVal.name())
