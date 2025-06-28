@@ -156,8 +156,12 @@ public class Controller {
             coordinates.put(playerName, playerCoordinates);
         }
         else playerCoordinates.clear();
-        for (ItemFinder.SearchResult result : ItemFinder.results) playerCoordinates.add(result.pos());
-        for (LootTableFinder.SearchResult result : LootTableFinder.results) playerCoordinates.add(result.pos());
+
+        for (ItemFinder.SearchResult result : ItemFinder.results.stream().sorted(ItemFinder::sortResults).toList())
+            playerCoordinates.add(result.pos());
+        for (LootTableFinder.SearchResult result : LootTableFinder.results.stream().sorted(LootTableFinder::sortResults).toList())
+            playerCoordinates.add(result.pos());
+
         currentPositions.put(playerName, 1);
 
         ItemFinder.results.clear();

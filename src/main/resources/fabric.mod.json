@@ -4,7 +4,7 @@
   "version": "${version}",
 
   "name": "Item Finder",
-  "description": "self explanatory I think",
+  "description": "It finds stuff.",
   "authors": [
     "Vladomeme"
   ],

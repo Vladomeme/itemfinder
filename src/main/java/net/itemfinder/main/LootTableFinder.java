@@ -260,10 +260,29 @@ public class LootTableFinder {
 
         //format: 1. <block name> [x, y, z]
         int i = 0;
-        for (SearchResult result : results) currentUser.sendMessage(makeMessage(++i, result.name(), result.pos(), result.lootTable));
+        for (SearchResult result : results.stream().sorted(LootTableFinder::sortResults).toList())
+            currentUser.sendMessage(makeMessage(++i, result.name(), result.pos(), result.lootTable));
         currentUser.sendMessage(Text.of("/-----------------------------/"));
 
         reset();
+    }
+
+    public static int sortResults(SearchResult o1, SearchResult o2) {
+        switch (IFConfig.INSTANCE.sortMode) {
+            case "Coords" -> {
+                int result = Integer.compare(o1.pos.getX(), o2.pos.getX());
+                if (result != 0) return result;
+                result = Integer.compare(o1.pos.getZ(), o2.pos.getZ());
+                if (result != 0) return result;
+                return Integer.compare(o1.pos.getY(), o2.pos.getY());
+            }
+            case "Name" -> {
+                return o1.name.compareTo(o2.name);
+            }
+            default -> {
+                return 0;
+            }
+        }
     }
 
     /**
