@@ -21,7 +21,7 @@ public class ClientController {
         //noinspection StatementWithEmptyBody
         while (IFModClient.teleportKey.wasPressed());
         ClientPlayNetworkHandler nh = client.getNetworkHandler();
-        if (nh != null) nh.sendCommand("finditem next");
+        if (nh != null) nh.sendChatCommand("finditem next");
     }
 
     /**
@@ -52,6 +52,6 @@ public class ClientController {
         player.sendMessage(Text.literal("Requesting search for " + s).setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), false);
 
         ClientPlayNetworkHandler handler = MinecraftClient.getInstance().getNetworkHandler();
-        if (handler != null) handler.sendCommand("finditem " + mode + " \"" + s + (global ? "\" global" : "\""));
+        if (handler != null) handler.sendChatCommand("finditem " + mode + " \"" + s + (global ? "\" global" : "\""));
     }
 }

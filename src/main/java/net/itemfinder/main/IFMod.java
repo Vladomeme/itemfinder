@@ -11,6 +11,8 @@ import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.Executors;
+
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
@@ -59,7 +61,10 @@ public class IFMod implements ModInitializer {
             if (!IFConfig.FILE.exists()) IFConfig.INSTANCE.write();
             Controller.shutdown();
         });
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> LootTableFinder.updateSuggestions(server.getResourceManager()));
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            LootTableFinder.updateSuggestions(server.getResourceManager());
+            Controller.scanExecutor = Executors.newFixedThreadPool(4, Controller::getThread);
+        });
         ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, rm, success) -> LootTableFinder.updateSuggestions(rm));
 
         ItemFinder.ERROR_STACK.applyComponentsFrom(ComponentMap.builder()

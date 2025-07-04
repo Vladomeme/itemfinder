@@ -22,9 +22,7 @@ import net.minecraft.entity.passive.MerchantEntity;
 import net.minecraft.entity.vehicle.VehicleInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
+import net.minecraft.nbt.*;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -106,7 +104,7 @@ public class ItemFinder {
             currentUser.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
                     .withColor(Formatting.AQUA)
                     .withUnderline(true)
-                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))), false);
+                    .withClickEvent(new ClickEvent.RunCommand("/finditem confirm"))), false);
         }
         return 1;
     }
@@ -116,13 +114,16 @@ public class ItemFinder {
      */
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
+        currentUser.sendMessage(Text.of("Saving chunk data..."));
+        Objects.requireNonNull(currentUser.getServer()).save(true, true, false);
+
         itemSearchRequested = false;
         searching.set(true);
 
         startTime = System.nanoTime();
 
         scanExecutor.submit(() -> {
-            ServerWorld world = (ServerWorld) currentUser.getWorld();
+            ServerWorld world = currentUser.getWorld();
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
@@ -166,10 +167,11 @@ public class ItemFinder {
                             future.complete(null);
                             return;
                         }
-                        nbtData.getList("block_entities", 10).forEach(nbtElement -> checkBlockEntityNBT((NbtCompound) nbtElement));
+                        nbtData.getList("block_entities").ifPresent(list ->
+                                list.forEach(nbtElement -> checkBlockEntityNBT((NbtCompound) nbtElement)));
                     }
                     catch (Throwable e) {
-                        IFMod.LOGGER.error("Failed to deserialize chunk {} with data of size {}. Ignore if search finishes.", pos, nbtData.getSize());
+                        IFMod.LOGGER.error("Failed to process chunk {} with data of size {}.", pos, nbtData.getSize());
                         future.complete(null);
                         throw e;
                     }
@@ -194,7 +196,7 @@ public class ItemFinder {
                         entities.stream().forEach(entity -> checkEntity(entity, searchType, searchString));
                     }
                     catch (Throwable e) {
-                        IFMod.LOGGER.error("Failed to deserialize entity chunk {}. Ignore if search finishes.", pos);
+                        IFMod.LOGGER.error("Failed to process entity chunk {}.", pos);
                         future.complete(null);
                         throw e;
                     }
@@ -229,7 +231,7 @@ public class ItemFinder {
 
         List<ItemStack> inventory = new ArrayList<>();
         if (entity instanceof ItemFrameEntity) inventory.add(((ItemFrameEntity) entity).getHeldItemStack());
-        else if (entity instanceof ArmorStandEntity) ((ArmorStandEntity) entity).getEquippedItems().forEach(inventory::add);
+        else if (entity instanceof ArmorStandEntity) getEquipment(entity, inventory);
         else if (entity instanceof ItemEntity) inventory.add(((ItemEntity) entity).getStack());
         else if (entity instanceof VehicleInventory) inventory.addAll(((VehicleInventory) entity).getInventory());
         else if (entity instanceof DisplayEntity.ItemDisplayEntity && IFConfig.INSTANCE.scanItemDisplays)
@@ -241,6 +243,12 @@ public class ItemFinder {
 
         checkInventory(inventory, type, s).ifPresent(stack -> results.add(
                 new SearchResult(((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos(), stack)));
+    }
+
+    public static void getEquipment(Entity entity, List<ItemStack> inventory) {
+        ((EntityEquipmentMixin) ((LivingEntityMixin) entity).equipment()).map().values().forEach(stack -> {
+            if (stack != null && !stack.getItem().equals(Items.AIR)) inventory.add(stack);
+        });
     }
 
     public static void getTrades(MerchantEntity entity, List<ItemStack> inventory) {
@@ -310,18 +318,18 @@ public class ItemFinder {
     }
 
     /**
-     * Checks block entity inventory via {@link #checkInventoryNBT(NbtList)}, gets block name and position, adds a search result if inventory matches.
+     * Checks block entity inventory via {@link #checkInventoryNBT(NbtList, boolean)}, gets block name and position, adds a search result if inventory matches.
      */
     public static void checkBlockEntityNBT(NbtCompound nbt) {
         blockCount.incrementAndGet();
 
-        Optional<ItemStack> stack = checkInventoryNBT(nbt.getList("Items", 10));
+        Optional<ItemStack> stack = checkInventoryNBT(nbt.getListOrEmpty("Items"), false);
         if (stack.isPresent()) {
             //minecraft:trapped_chest -> Trapped Chest
-            String name = Arrays.stream(nbt.getString("id").replace("minecraft:", "").split("_"))
+            String name = Arrays.stream(nbt.getString("id", "").replace("minecraft:", "").split("_"))
                     .map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
                     .collect(Collectors.joining(" "));
-            BlockPos pos = new BlockPos(nbt.getInt("x"), nbt.getInt("y"), nbt.getInt("z"));
+            BlockPos pos = new BlockPos(nbt.getInt("x", 0), nbt.getInt("y", 0), nbt.getInt("z", 0));
 
             results.add(new SearchResult(name, pos, stack.get()));
         }
@@ -330,10 +338,10 @@ public class ItemFinder {
     /**
      * If given inventory (in NBT form) contains an item stack that matches the search parameters (id/name/data), returns that item stack.
      */
-    public static Optional<ItemStack> checkInventoryNBT(NbtList inventory) {
+    public static Optional<ItemStack> checkInventoryNBT(NbtList inventory, boolean shulker) {
         for (NbtElement item : inventory) {
-            NbtCompound nbt = (NbtCompound) item;
-            String id = nbt.getString("id");
+            NbtCompound nbt = shulker ? ((NbtCompound) item).getCompoundOrEmpty("item") : (NbtCompound) item;
+            String id = nbt.getString("id", "");
 
             //If item has NBT data, see if it contains any items within it.
             Optional<ItemStack> stack = checkNestedNBT(id, nbt.copy());
@@ -344,23 +352,42 @@ public class ItemFinder {
                     if (!id.substring(id.indexOf(':') + 1).equals(searchString)) continue;
                 }
                 case 1 -> {
-                    if (nbt.getCompound("components").contains("minecraft:custom_name")) {
-                        if (!nbt.getCompound("components").getString("minecraft:custom_name").toLowerCase()
-                                .contains(searchString)) continue;
-                    }
-                    else if (nbt.getCompound("components").contains("minecraft:item_name")) {
-                        if (!nbt.getCompound("components").getString("minecraft:item_name").toLowerCase()
-                                .contains(searchString)) continue;
-                    }
-                    else if (!id.substring(id.indexOf(':') + 1).contains(searchString)) continue;
+                    if (!checkName(nbt, id)) continue;
                 }
                 case 2 -> {
                     if (!nbt.toString().toLowerCase().contains(searchString.toLowerCase())) continue;
                 }
             }
-            return Optional.of(ItemStack.fromNbt(currentUser.getRegistryManager(), nbt).orElse(ERROR_STACK));
+            return Optional.of(nbt.decode(ItemStack.MAP_CODEC, currentUser.getWorld().getRegistryManager().getOps(NbtOps.INSTANCE)).orElse(ERROR_STACK));
         }
         return Optional.empty();
+    }
+
+    private static boolean checkName(NbtCompound nbt, String id) {
+        NbtElement nameElement = nbt.getCompoundOrEmpty("components").get("minecraft:custom_name");
+        if (nameElement == null) nameElement = nbt.getCompoundOrEmpty("components").get("minecraft:item_name");
+
+        if (nameElement != null) {
+            switch (nameElement.getType()) {
+                case 8 -> {
+                    return ((NbtString) nameElement).value().toLowerCase().contains(searchString);
+                }
+                case 9 -> {
+                    StringBuilder builder = new StringBuilder();
+                    NbtList list = (NbtList) nameElement;
+                    for (NbtElement element : list) {
+                        if (element.getType() == 8) builder.append(((NbtString) element).value());
+                        else builder.append(((NbtCompound) element).getString("text", ""));
+                    }
+                    return builder.toString().toLowerCase().contains(searchString);
+                }
+                case 10 -> {
+                    return ((NbtCompound) nameElement).getString("text", "").toLowerCase().contains(searchString);
+                }
+            }
+            return false;
+        }
+        else return id.substring(id.indexOf(':') + 1).contains(searchString);
     }
 
     /**
@@ -383,10 +410,11 @@ public class ItemFinder {
      * Calls nested inventory check for found bundles & shulker boxes (in NBT form).
      */
     public static Optional<ItemStack> checkNestedNBT(String id, NbtCompound nbt) {
-        if (nbt.contains("tag")) nbt = nbt.getCompound("tag");
-
-        if (id.contains("bundle")) return checkInventoryNBT(nbt.getList("Items", 10));
-        else if (id.contains("shulker_box")) return checkInventoryNBT(nbt.getCompound("BlockEntityTag").getList("Items", 10));
+        if (id.contains("bundle"))
+            return checkInventoryNBT(nbt.getCompoundOrEmpty("components").getListOrEmpty("minecraft:bundle_contents"), false);
+        else if (id.contains("shulker_box")) {
+            return checkInventoryNBT(nbt.getCompoundOrEmpty("components").getListOrEmpty("minecraft:container"), true);
+        }
         return Optional.empty();
     }
 
@@ -407,6 +435,7 @@ public class ItemFinder {
 
         reset();
     }
+
     //todo merge methods
     public static int sortResults(SearchResult o1, SearchResult o2) {
         switch (IFConfig.INSTANCE.sortMode) {
@@ -433,13 +462,12 @@ public class ItemFinder {
         return Text.literal((i) + ". ")
                 .append(Text.literal(name)
                         .setStyle(Style.EMPTY
-                                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_ITEM,
-                                        new HoverEvent.ItemStackContent(stack)))))
+                                .withHoverEvent(new HoverEvent.ShowItem(stack))))
                 .append(Text.literal(" "))
                 .append(Text.literal("[" + pos.getX() + " " + pos.getY() + " " + pos.getZ() + "]")
                         .setStyle(Style.EMPTY
-                                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.of("Click to teleport")))
-                                .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/tp " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
+                                .withHoverEvent(new HoverEvent.ShowText(Text.of("Click to teleport")))
+                                .withClickEvent(new ClickEvent.RunCommand("/tp " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
                                 .withColor(Formatting.AQUA)
                                 .withUnderline(true)));
     }

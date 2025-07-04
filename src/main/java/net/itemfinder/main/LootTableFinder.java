@@ -84,7 +84,7 @@ public class LootTableFinder {
             currentUser.sendMessage(Text.literal("[Start]").setStyle(Style.EMPTY
                     .withColor(Formatting.AQUA)
                     .withUnderline(true)
-                    .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/finditem confirm"))));
+                    .withClickEvent(new ClickEvent.RunCommand("/finditem confirm"))));
         }
         return 1;
     }
@@ -100,7 +100,7 @@ public class LootTableFinder {
         startTime = System.nanoTime();
 
         scanExecutor.submit(() -> {
-            ServerWorld world = (ServerWorld) currentUser.getWorld();
+            ServerWorld world = currentUser.getWorld();
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
@@ -142,7 +142,8 @@ public class LootTableFinder {
                             future.complete(null);
                             return;
                         }
-                        nbtData.getList("block_entities", 10).forEach(nbtElement -> checkBlockEntityNBT((NbtCompound) nbtElement));
+                        nbtData.getList("block_entities").ifPresent(list ->
+                                list.forEach(nbtElement -> checkBlockEntityNBT((NbtCompound) nbtElement)));
                     }
                     catch (Throwable e) {
                         IFMod.LOGGER.error("Failed to deserialize chunk {} with data of size {}. Ignore if search finishes.", pos, nbtData.getSize());
@@ -211,7 +212,7 @@ public class LootTableFinder {
         blockCount.incrementAndGet();
 
         //minecraft:trapped_chest -> trapped_chest
-        String id = nbt.getString("id").split(":")[1];
+        String id = nbt.getString("id", "").split(":")[1];
 
         if (IFConfig.INSTANCE.onlyShowChestsLootTable) {
             if (!(id.equals("chest"))) return;
@@ -223,25 +224,25 @@ public class LootTableFinder {
         String name = Arrays.stream(id.split("_"))
                 .map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
                 .collect(Collectors.joining(" "));
-        BlockPos pos = new BlockPos(nbt.getInt("x"), nbt.getInt("y"), nbt.getInt("z"));
+        BlockPos pos = new BlockPos(nbt.getInt("x", 0), nbt.getInt("y", 0), nbt.getInt("z", 0));
 
         //See checkBlockEntity() for branch descriptions
         switch (searchString) {
             case "any" -> {
                 if (nbt.contains("LootTable"))
-                    results.add(new SearchResult(name, pos, nbt.getString("LootTable")));
+                    results.add(new SearchResult(name, pos, nbt.getString("LootTable", "")));
             }
             case "none" -> {
                 if (!nbt.contains("LootTable"))
-                    results.add(new SearchResult(name, pos, nbt.getString("")));
+                    results.add(new SearchResult(name, pos, ""));
             }
             case "none_empty" -> {
-                if (!nbt.contains("LootTable") && nbt.getList("Items", 10).isEmpty())
+                if (!nbt.contains("LootTable") && nbt.getListOrEmpty("Items").isEmpty())
                     results.add(new SearchResult(name, pos, ""));
             }
             default -> {
                 if (nbt.contains("LootTable")) {
-                    String lootTable = nbt.getString("LootTable");
+                    String lootTable = nbt.getString("LootTable", "");
                     if (lootTable.substring(lootTable.indexOf(':') + 1).equals(searchString))
                         results.add(new SearchResult(name, pos, ""));
                 }
@@ -292,14 +293,14 @@ public class LootTableFinder {
         MutableText text = Text.literal((i) + ". ");
         if (!lootTable.isEmpty()) {
             text.append(Text.literal(name)).setStyle(Style.EMPTY
-                    .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.of(lootTable))));
+                    .withHoverEvent(new HoverEvent.ShowText(Text.of(lootTable))));
         }
         else text.append(Text.literal(name));
         text.append(Text.literal(" "))
                 .append(Text.literal("[" + pos.getX() + " " + pos.getY() + " " + pos.getZ() + "]")
                         .setStyle(Style.EMPTY
-                                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Text.of("Click to teleport")))
-                                .withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/tp " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
+                                .withHoverEvent(new HoverEvent.ShowText(Text.of("Click to teleport")))
+                                .withClickEvent(new ClickEvent.RunCommand("/tp " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
                                 .withColor(Formatting.AQUA)
                                 .withUnderline(true)));
         return text;

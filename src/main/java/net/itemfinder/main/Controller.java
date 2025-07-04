@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Controller {
 
     static int threadCount = 0;
-    static final ExecutorService scanExecutor = Executors.newFixedThreadPool(4, Controller::getThread);
+    static ExecutorService scanExecutor = Executors.newFixedThreadPool(4, Controller::getThread);
 
     static boolean itemSearchRequested = false;
     static boolean lootTableSearchRequested = false;
@@ -50,7 +50,7 @@ public class Controller {
     /**
      * Used to create threads for the {@link #scanExecutor}.
      */
-    private static Thread getThread(Runnable runnable) {
+    public static Thread getThread(Runnable runnable) {
         Thread thread = new Thread(runnable);
         thread.setName("Item-Finder-Scan-Worker-" + threadCount++);
         thread.setDaemon(true);
