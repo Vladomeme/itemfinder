@@ -50,7 +50,7 @@ public class LootTableFinder {
 
         //find matches in all loaded lootable block entities
         ((ServerChunkLoadingManagerMixin) world.getChunkManager().chunkLoadingManager)
-                .entryIterator().forEach(chunkHolder -> {
+                .chunkHolders().values().forEach(chunkHolder -> {
                     WorldChunk chunk = chunkHolder.getWorldChunk();
                     if (chunk != null) chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(
                             chunk.getBlockState(be.getPos()).getBlock().getName().getString(), be, s));
@@ -69,7 +69,7 @@ public class LootTableFinder {
         if (searching.get()) {
             getSourcePlayer(context).sendMessage(
                     Text.of("Search is already active (" + (System.nanoTime() - startTime) / 1000000000
-                            + "s., requested by " + currentUser.getGameProfile().getName()));
+                            + "s., requested by " + currentUser.getGameProfile().name()));
             return 1;
         }
 
@@ -100,7 +100,7 @@ public class LootTableFinder {
         startTime = System.nanoTime();
 
         scanExecutor.submit(() -> {
-            ServerWorld world = currentUser.getWorld();
+            ServerWorld world = currentUser.getEntityWorld();
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();

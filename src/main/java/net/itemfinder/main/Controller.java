@@ -112,7 +112,7 @@ public class Controller {
         if (!(player.isCreative() || player.isSpectator())) {
             throw new SimpleCommandExceptionType(Text.of("Command can only be used in creative and spectator mode.")).create();
         }
-        String playerName = player.getGameProfile().getName();
+        String playerName = player.getGameProfile().name();
         List<BlockPos> playerCoordinates = coordinates.get(playerName);
         Integer currentPosition = currentPositions.get(playerName);
         if (playerCoordinates == null || playerCoordinates.isEmpty() || currentPosition > playerCoordinates.size()) {
@@ -149,7 +149,7 @@ public class Controller {
         itemSearchRequested = false;
         lootTableSearchRequested = false;
 
-        String playerName = currentUser.getGameProfile().getName();
+        String playerName = currentUser.getGameProfile().name();
         List<BlockPos> playerCoordinates = coordinates.get(playerName);
         if (playerCoordinates == null) {
             playerCoordinates = new ArrayList<>();

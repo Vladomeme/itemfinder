@@ -7,7 +7,6 @@ import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import net.itemfinder.main.config.IFConfig;
 import net.itemfinder.main.mixin.*;
 import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.ChiseledBookshelfBlockEntity;
 import net.minecraft.block.entity.LecternBlockEntity;
 import net.minecraft.block.entity.LockableContainerBlockEntity;
 import net.minecraft.component.Component;
@@ -20,6 +19,7 @@ import net.minecraft.entity.decoration.DisplayEntity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.entity.passive.MerchantEntity;
 import net.minecraft.entity.vehicle.VehicleInventory;
+import net.minecraft.inventory.ListInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.nbt.*;
@@ -67,7 +67,7 @@ public class ItemFinder {
 
         //find matches in all loaded block entities with storage
         ((ServerChunkLoadingManagerMixin) world.getChunkManager().chunkLoadingManager)
-                .entryIterator().forEach(chunkHolder -> {
+                .chunkHolders().values().forEach(chunkHolder -> {
                     WorldChunk chunk = chunkHolder.getWorldChunk();
                     if (chunk != null) chunk.getBlockEntities().values().forEach(be -> checkBlockEntity(
                             chunk.getBlockState(be.getPos()).getBlock().getName().getString(), be, type, s));
@@ -88,7 +88,7 @@ public class ItemFinder {
         if (searching.get()) {
             getSourcePlayer(context).sendMessage(
                     Text.of("Search is already active (" + (System.nanoTime() - startTime) / 1000000000
-                            + "s., requested by " + currentUser.getGameProfile().getName() + ")"));
+                            + "s., requested by " + currentUser.getGameProfile().name() + ")"));
             return 1;
         }
 
@@ -115,7 +115,7 @@ public class ItemFinder {
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
         currentUser.sendMessage(Text.of("Saving chunk data..."));
-        Objects.requireNonNull(currentUser.getServer()).save(true, true, false);
+        Objects.requireNonNull(currentUser.getEntityWorld().getServer()).save(true, true, false);
 
         itemSearchRequested = false;
         searching.set(true);
@@ -123,7 +123,7 @@ public class ItemFinder {
         startTime = System.nanoTime();
 
         scanExecutor.submit(() -> {
-            ServerWorld world = currentUser.getWorld();
+            ServerWorld world = currentUser.getEntityWorld();
             List<Long> chunkPositions = getChunkPositions(world);
 
             chunkCount = chunkPositions.size();
@@ -274,13 +274,17 @@ public class ItemFinder {
         blockCount.incrementAndGet();
 
         List<ItemStack> inventory;
-        if (be instanceof LockableContainerBlockEntity) inventory = ((LockableContainerBlockEntityMixin) be).getHeldStacks();
-        else if (be instanceof LecternBlockEntity) {
-            inventory = new ArrayList<>();
-            inventory.add(((LecternBlockEntity) be).getBook());
+        switch (be) {
+            case LockableContainerBlockEntity lcbe -> inventory = ((LockableContainerBlockEntityMixin) lcbe).getHeldStacks();
+            case LecternBlockEntity lecternBlockEntity -> {
+                inventory = new ArrayList<>();
+                inventory.add(lecternBlockEntity.getBook());
+            }
+            case ListInventory listInventory -> inventory = listInventory.getHeldStacks();
+            case null, default -> {
+                return;
+            }
         }
-        else if (be instanceof ChiseledBookshelfBlockEntity) inventory = ((ChiseledBookshelfBlockEntityMixin) be).getInventory();
-        else return;
 
         checkInventory(inventory, type, s).ifPresent(stack -> results.add(new SearchResult(name, be.getPos(), stack)));
     }
@@ -307,7 +311,8 @@ public class ItemFinder {
                 case 2 -> {
                     if (components == ComponentMap.EMPTY || components == null) continue;
                     Optional<Component<?>> result = components.stream()
-                            .filter(component -> String.valueOf(component.value()).toLowerCase().contains(s.toLowerCase()))
+                            .filter(component -> String.valueOf(component.type()).toLowerCase().contains(s.toLowerCase())
+                                    || String.valueOf(component.value()).toLowerCase().contains(s.toLowerCase()))
                             .findFirst();
                     if (result.isEmpty()) continue;
                 }
@@ -358,7 +363,7 @@ public class ItemFinder {
                     if (!nbt.toString().toLowerCase().contains(searchString.toLowerCase())) continue;
                 }
             }
-            return Optional.of(nbt.decode(ItemStack.MAP_CODEC, currentUser.getWorld().getRegistryManager().getOps(NbtOps.INSTANCE)).orElse(ERROR_STACK));
+            return Optional.of(nbt.decode(ItemStack.MAP_CODEC, currentUser.getEntityWorld().getRegistryManager().getOps(NbtOps.INSTANCE)).orElse(ERROR_STACK));
         }
         return Optional.empty();
     }
