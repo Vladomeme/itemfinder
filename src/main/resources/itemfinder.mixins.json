@@ -12,6 +12,7 @@
     "EntityEquipmentMixin",
     "EntityMixin",
     "ItemDisplayEntityMixin",
+    "ItemEnchantmentsComponentMixin",
     "LivingEntityMixin",
     "LockableContainerBlockEntityMixin",
     "LootableContainerBlockEntityMixin",

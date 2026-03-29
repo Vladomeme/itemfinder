@@ -30,13 +30,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Controller {
 
     static int threadCount = 0;
-    static ExecutorService scanExecutor = Executors.newFixedThreadPool(4, Controller::getThread);
+    static ExecutorService scanExecutor = Executors.newThreadPerTaskExecutor(Controller::getThread);
 
     static boolean itemSearchRequested = false;
     static boolean lootTableSearchRequested = false;
     static final AtomicBoolean searching = new AtomicBoolean(false);
     static long startTime;
     static int chunkCount;
+    /**
+     * 0 - id, 1 - name, 2 - data;
+     */
     static int searchType;
     static String searchString = "";
     static ServerPlayerEntity currentUser;
@@ -51,10 +54,7 @@ public class Controller {
      * Used to create threads for the {@link #scanExecutor}.
      */
     public static Thread getThread(Runnable runnable) {
-        Thread thread = new Thread(runnable);
-        thread.setName("Item-Finder-Scan-Worker-" + threadCount++);
-        thread.setDaemon(true);
-        return thread;
+        return Thread.ofVirtual().name("Item-Finder-Scan-Worker-" + threadCount++).unstarted(runnable);
     }
 
     /**
@@ -157,10 +157,10 @@ public class Controller {
         }
         else playerCoordinates.clear();
 
-        for (ItemFinder.SearchResult result : ItemFinder.results.stream().sorted(ItemFinder::sortResults).toList())
-            playerCoordinates.add(result.pos());
-        for (LootTableFinder.SearchResult result : LootTableFinder.results.stream().sorted(LootTableFinder::sortResults).toList())
-            playerCoordinates.add(result.pos());
+        for (ItemFinder.SearchResult result : ItemFinder.results.stream().sorted(AbstractSearchResult::compare).toList())
+            playerCoordinates.add(result.pos);
+        for (LootTableFinder.LootTableSearchResult result : LootTableFinder.results.stream().sorted(AbstractSearchResult::compare).toList())
+            playerCoordinates.add(result.pos);
 
         currentPositions.put(playerName, 1);
 

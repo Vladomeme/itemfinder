@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.stream.JsonWriter;
 import dev.isxander.yacl3.api.ConfigCategory;
 import dev.isxander.yacl3.api.Option;
+import dev.isxander.yacl3.api.OptionDescription;
 import dev.isxander.yacl3.api.YetAnotherConfigLib;
 import dev.isxander.yacl3.api.controller.EnumControllerBuilder;
 import dev.isxander.yacl3.api.controller.TickBoxControllerBuilder;
@@ -25,6 +26,7 @@ public class IFConfig {
     public String sortMode = "Coords";
     public String handSearchMode = "Name";
     public boolean suggestVanillaLootTables = false;
+    public boolean ignoreDefaultComponents = true;
     public boolean onlyShowChestsLootTable = true;
 
     public static final File FILE = new File(FabricLoader.getInstance().getConfigDir().toFile(), "itemfinder.json");
@@ -100,6 +102,13 @@ public class IFConfig {
                         .option(Option.<Boolean>createBuilder()
                                 .name(Text.literal("Suggest vanilla loot tables"))
                                 .binding(false, () -> suggestVanillaLootTables, newVal -> suggestVanillaLootTables = newVal)
+                                .controller(TickBoxControllerBuilder::create).build())
+
+                        .option(Option.<Boolean>createBuilder()
+                                .name(Text.literal("Ignore default/empty components"))
+                                .description(OptionDescription.of(Text.literal("If enabled, data search ignores components with default values: lore, " +
+                                        "attribute_modifiers, enchantments.")))
+                                .binding(true, () -> ignoreDefaultComponents, newVal -> ignoreDefaultComponents = newVal)
                                 .controller(TickBoxControllerBuilder::create).build())
 
                         .option(Option.<Boolean>createBuilder()

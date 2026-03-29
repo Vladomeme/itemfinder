@@ -12,6 +12,9 @@ import net.minecraft.block.entity.LockableContainerBlockEntity;
 import net.minecraft.component.Component;
 import net.minecraft.component.ComponentMap;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.AttributeModifiersComponent;
+import net.minecraft.component.type.ItemEnchantmentsComponent;
+import net.minecraft.component.type.LoreComponent;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.decoration.ArmorStandEntity;
@@ -38,18 +41,17 @@ import net.minecraft.village.TradeOffer;
 import net.minecraft.village.TradeOfferList;
 import net.minecraft.world.chunk.WorldChunk;
 import net.minecraft.world.storage.ChunkDataList;
-import org.jetbrains.annotations.NotNull;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 import static net.itemfinder.main.Controller.*;
 
 public class ItemFinder {
 
-    static final Set<SearchResult> results = Collections.synchronizedSet(new HashSet<>());
+    static final ConcurrentLinkedQueue<SearchResult> results = new ConcurrentLinkedQueue<>();
     public static final ItemStack ERROR_STACK = new ItemStack(Items.STICK);
 
     /**
@@ -172,6 +174,7 @@ public class ItemFinder {
                     }
                     catch (Throwable e) {
                         IFMod.LOGGER.error("Failed to process chunk {} with data of size {}.", pos, nbtData.getSize());
+                        IFMod.LOGGER.error(e.getMessage());
                         future.complete(null);
                         throw e;
                     }
@@ -200,7 +203,7 @@ public class ItemFinder {
                         future.complete(null);
                         throw e;
                     }
-                    currentUser.sendMessage(Text.literal("Progress: " + progress.get() + "/" + chunkCount + ".")
+                    currentUser.sendMessage(Text.literal("Progress: " + progress.get() + "/" + chunkCount + " chunks")
                             .setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
                     future.complete(null);
                 });
@@ -303,23 +306,41 @@ public class ItemFinder {
 
             switch (type) {
                 case 0 -> {
-                    if (!id.equals(s)) continue;
+                    if (id.equals(s)) return Optional.of(stack);
                 }
                 case 1 -> {
-                    if (!stack.getName().getString().toLowerCase().contains(s.toLowerCase())) continue;
+                    if (stack.getName().getString().toLowerCase().contains(s)) return Optional.of(stack);
                 }
                 case 2 -> {
                     if (components == ComponentMap.EMPTY || components == null) continue;
-                    Optional<Component<?>> result = components.stream()
-                            .filter(component -> String.valueOf(component.type()).toLowerCase().contains(s.toLowerCase())
-                                    || String.valueOf(component.value()).toLowerCase().contains(s.toLowerCase()))
-                            .findFirst();
-                    if (result.isEmpty()) continue;
+                    if (checkComponents(components, s)) return Optional.of(stack);
                 }
             }
-            return Optional.of(stack);
         }
         return Optional.empty();
+    }
+
+    public static boolean checkComponents(ComponentMap components, String s) {
+        for (Component<?> untypedComponent : components) {
+            //because empty components show up on every item, fuck you mojang
+            if (IFConfig.INSTANCE.ignoreDefaultComponents) {
+                switch (untypedComponent.value()) {
+                    case LoreComponent component -> {
+                        if (component.lines().isEmpty() && component.styledLines().isEmpty()) continue;
+                    }
+                    case AttributeModifiersComponent component -> {
+                        if (component.modifiers().isEmpty()) continue;
+                    }
+                    case ItemEnchantmentsComponent component -> {
+                        if (((ItemEnchantmentsComponentMixin) component).enchantments().isEmpty()) continue;
+                    }
+                    default -> {}
+                }
+            }
+            if (String.valueOf(untypedComponent.type()).toLowerCase().contains(s)
+                    || String.valueOf(untypedComponent.value()).toLowerCase().contains(s)) return true;
+        }
+        return false;
     }
 
     /**
@@ -330,10 +351,7 @@ public class ItemFinder {
 
         Optional<ItemStack> stack = checkInventoryNBT(nbt.getListOrEmpty("Items"), false);
         if (stack.isPresent()) {
-            //minecraft:trapped_chest -> Trapped Chest
-            String name = Arrays.stream(nbt.getString("id", "").replace("minecraft:", "").split("_"))
-                    .map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
-                    .collect(Collectors.joining(" "));
+            String name = idToName(nbt.getString("id", "unknown"));
             BlockPos pos = new BlockPos(nbt.getInt("x", 0), nbt.getInt("y", 0), nbt.getInt("z", 0));
 
             results.add(new SearchResult(name, pos, stack.get()));
@@ -360,7 +378,7 @@ public class ItemFinder {
                     if (!checkName(nbt, id)) continue;
                 }
                 case 2 -> {
-                    if (!nbt.toString().toLowerCase().contains(searchString.toLowerCase())) continue;
+                    if (!nbt.toString().toLowerCase().contains(searchString)) continue;
                 }
             }
             return Optional.of(nbt.decode(ItemStack.MAP_CODEC, currentUser.getEntityWorld().getRegistryManager().getOps(NbtOps.INSTANCE)).orElse(ERROR_STACK));
@@ -374,20 +392,35 @@ public class ItemFinder {
 
         if (nameElement != null) {
             switch (nameElement.getType()) {
-                case 8 -> {
+                case 8 -> { //straight string
                     return ((NbtString) nameElement).value().toLowerCase().contains(searchString);
                 }
-                case 9 -> {
+                case 9 -> { //NbtCompound list
                     StringBuilder builder = new StringBuilder();
                     NbtList list = (NbtList) nameElement;
                     for (NbtElement element : list) {
                         if (element.getType() == 8) builder.append(((NbtString) element).value());
                         else builder.append(((NbtCompound) element).getString("text", ""));
                     }
-                    return builder.toString().toLowerCase().contains(searchString);
+                    if (builder.toString().toLowerCase().contains(searchString)) return true;
+                    builder.setLength(0);
+                    for (NbtElement element : list) {
+                        if (element.getType() == 8) builder.append(((NbtString) element).value());
+                        else builder.append(((NbtCompound) element).getString("fallback", ""));
+                    }
+                    if (builder.toString().toLowerCase().contains(searchString)) return true;
+                    builder.setLength(0);
+                    for (NbtElement element : list) {
+                        if (element.getType() == 8) builder.append(((NbtString) element).value());
+                        else builder.append(((NbtCompound) element).getString("translate", ""));
+                    }
+                    return (builder.toString().toLowerCase().contains(searchString));
                 }
-                case 10 -> {
-                    return ((NbtCompound) nameElement).getString("text", "").toLowerCase().contains(searchString);
+                case 10 -> { // NbtCompound
+                    NbtCompound nameCompound = (NbtCompound) nameElement;
+                    return nameCompound.getString("text", "").toLowerCase().contains(searchString)
+                            || nameCompound.getString("fallback", "").toLowerCase().contains(searchString)
+                            || nameCompound.getString("translate", "").toLowerCase().contains(searchString);
                 }
             }
             return false;
@@ -427,37 +460,19 @@ public class ItemFinder {
      * Prints out search results with search stats & teleportation commands.
      */
     public static void sendResults() {
+        List<SearchResult> resultList = new ArrayList<>(results);
         currentUser.sendMessage(Text.of("/-----------------------------/"));
         currentUser.sendMessage(Text.of("Blocks/entities searched: " + blockCount + "/" + entityCount));
-        currentUser.sendMessage(Text.of("Matching results: " + results.size() +
-                (results.isEmpty() ? " :(" : "")));
+        currentUser.sendMessage(Text.of("Matching results: " + resultList.size() +
+                (resultList.isEmpty() ? " :(" : "")));
 
-        //format: 1. <block/entity name> [x, y, z]
         int i = 0;
-        for (SearchResult result : results.stream().sorted(ItemFinder::sortResults).toList())
-                currentUser.sendMessage(makeMessage(++i, result.name(), result.pos(), result.stack()));
+        resultList.sort(AbstractSearchResult::compare);
+        //format: 1. <block/entity name> [x, y, z]
+        for (SearchResult result : resultList) currentUser.sendMessage(makeMessage(++i, result.name, result.pos, result.stack));
         currentUser.sendMessage(Text.of("/-----------------------------/"));
 
         reset();
-    }
-
-    //todo merge methods
-    public static int sortResults(SearchResult o1, SearchResult o2) {
-        switch (IFConfig.INSTANCE.sortMode) {
-            case "Coords" -> {
-                int result = Integer.compare(o1.pos.getX(), o2.pos.getX());
-                if (result != 0) return result;
-                result = Integer.compare(o1.pos.getZ(), o2.pos.getZ());
-                if (result != 0) return result;
-                return Integer.compare(o1.pos.getY(), o2.pos.getY());
-            }
-            case "Name" -> {
-                return o1.name.compareTo(o2.name);
-            }
-            default -> {
-                return 0;
-            }
-        }
     }
 
     /**
@@ -477,6 +492,23 @@ public class ItemFinder {
                                 .withUnderline(true)));
     }
 
+    //minecraft:trapped_chest -> Trapped Chest
+    public static String idToName(String s) {
+        int index = s.indexOf(':');
+        if (index != -1) s = s.substring(index + 1);
+
+        char[] chars = s.toCharArray();
+        chars[0] -= 32;
+        for (int i = 1; i < chars.length; i++) {
+            if (chars[i] == '_') {
+                chars[i] = ' ';
+                chars[i + 1] -= 32;
+                i++;
+            }
+        }
+        return String.copyValueOf(chars);
+    }
+
     /**
      * Returns item IDs for `/finditem id` autocompletion.
      */
@@ -490,14 +522,14 @@ public class ItemFinder {
         return builder.buildFuture();
     }
 
-    public record SearchResult(String name, BlockPos pos, ItemStack stack) implements Comparable<SearchResult> {
+    public static class SearchResult extends AbstractSearchResult {
 
-        @Override
-        public int compareTo(@NotNull ItemFinder.SearchResult o) {
-            if (pos().equals(o.pos())) return 0;
-            if (Math.abs(pos.getX()) + Math.abs(pos().getY()) + Math.abs(pos().getZ())
-                    > Math.abs(o.pos.getX()) + Math.abs(o.pos().getY()) + Math.abs(o.pos().getZ())) return 1;
-            return -1;
+        final ItemStack stack;
+
+        SearchResult(String name, BlockPos pos, ItemStack stack) {
+            this.name = name;
+            this.pos = pos;
+            this.stack = stack;
         }
     }
 }
