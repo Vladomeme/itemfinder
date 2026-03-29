@@ -472,6 +472,7 @@ public class ItemFinder {
         for (SearchResult result : resultList) currentUser.sendMessage(makeMessage(++i, result.name, result.pos, result.stack));
         currentUser.sendMessage(Text.of("/-----------------------------/"));
 
+        setPlayerCoordinates(resultList);
         reset();
     }
 

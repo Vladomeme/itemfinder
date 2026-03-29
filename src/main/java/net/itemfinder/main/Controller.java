@@ -149,6 +149,11 @@ public class Controller {
         itemSearchRequested = false;
         lootTableSearchRequested = false;
 
+        ItemFinder.results.clear();
+        LootTableFinder.results.clear();
+    }
+
+    public static void setPlayerCoordinates(List<? extends AbstractSearchResult> results) {
         String playerName = currentUser.getGameProfile().name();
         List<BlockPos> playerCoordinates = coordinates.get(playerName);
         if (playerCoordinates == null) {
@@ -157,15 +162,9 @@ public class Controller {
         }
         else playerCoordinates.clear();
 
-        for (ItemFinder.SearchResult result : ItemFinder.results.stream().sorted(AbstractSearchResult::compare).toList())
-            playerCoordinates.add(result.pos);
-        for (LootTableFinder.LootTableSearchResult result : LootTableFinder.results.stream().sorted(AbstractSearchResult::compare).toList())
-            playerCoordinates.add(result.pos);
+        for (AbstractSearchResult result : results) playerCoordinates.add(result.pos);
 
         currentPositions.put(playerName, 1);
-
-        ItemFinder.results.clear();
-        LootTableFinder.results.clear();
     }
 
     /**

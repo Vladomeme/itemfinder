@@ -269,6 +269,7 @@ public class LootTableFinder {
         for (LootTableSearchResult result : resultList) currentUser.sendMessage(makeMessage(++i, result.name, result.pos, result.lootTable));
         currentUser.sendMessage(Text.of("/-----------------------------/"));
 
+        setPlayerCoordinates(resultList);
         reset();
     }
 
