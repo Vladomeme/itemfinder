@@ -134,8 +134,8 @@ public class Controller {
      */
     @SuppressWarnings("SameReturnValue")
     public static int stop(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
-        reset();
         getSourcePlayer(context).sendMessage(Text.of(searching ? "Search interrupted." : "why... search wasn't running..."));
+        reset();
         return 1;
     }
 

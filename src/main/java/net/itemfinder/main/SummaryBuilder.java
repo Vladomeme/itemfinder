@@ -143,11 +143,12 @@ public class SummaryBuilder {
 
             try {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-
-                sendResults();
-                currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
-                        .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
-                searching = false;
+                if (searching) {
+                    sendResults();
+                    currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
+                            .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
+                    searching = false;
+                }
             }
             catch (Throwable e) {
                 searching = false;
@@ -221,9 +222,7 @@ public class SummaryBuilder {
                 .toList();
 
         currentUser.sendMessage(Text.of("/-----------------------------/"));
-        currentUser.sendMessage(Text.of("Blocks searched: " + blockCount));
-        currentUser.sendMessage(Text.of("Matching results: " + resultList.size() +
-                (resultList.isEmpty() ? " :(" : "")));
+        currentUser.sendMessage(Text.of("Items: " + blockCount));
 
         int i = 0;
         //format: 1. <item name> x<count>
