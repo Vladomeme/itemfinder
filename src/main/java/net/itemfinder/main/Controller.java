@@ -24,7 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Controller {
@@ -34,7 +33,10 @@ public class Controller {
 
     static boolean itemSearchRequested = false;
     static boolean lootTableSearchRequested = false;
-    static final AtomicBoolean searching = new AtomicBoolean(false);
+    /**
+     * Should be set to true when starting a global search operation
+     */
+    static volatile boolean searching = false;
     static long startTime;
     static int chunkCount;
     /**
@@ -132,10 +134,8 @@ public class Controller {
      */
     @SuppressWarnings("SameReturnValue")
     public static int stop(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
-        ServerPlayerEntity player = getSourcePlayer(context);
-        player.sendMessage(Text.of(searching.get() ? "Search interrupted." : "why... search wasn't running..."));
-
         reset();
+        getSourcePlayer(context).sendMessage(Text.of(searching ? "Search interrupted." : "why... search wasn't running..."));
         return 1;
     }
 
@@ -143,7 +143,7 @@ public class Controller {
      * Called at the end of each search request. Clears all parameters and records search results to {@link #coordinates}.
      */
     public static void reset() {
-        searching.set(false);
+        searching = false;
         blockCount.set(0);
         entityCount.set(0);
         itemSearchRequested = false;

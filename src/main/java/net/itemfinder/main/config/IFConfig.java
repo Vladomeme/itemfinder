@@ -24,6 +24,7 @@ public class IFConfig {
     public boolean scanItemDisplays = false;
     public boolean scanTrades = false;
     public String sortMode = "Coords";
+    public String summarySortMode = "Name";
     public String handSearchMode = "Name";
     public boolean suggestVanillaLootTables = false;
     public boolean ignoreDefaultComponents = true;
@@ -94,6 +95,11 @@ public class IFConfig {
                                 .binding(SortMode.Coords, () -> SortMode.valueOf(sortMode), newVal -> sortMode = newVal.name())
                                 .controller(opt -> EnumControllerBuilder.create(opt).enumClass(SortMode.class)).build())
 
+                        .option(Option.<SummarySortMode>createBuilder()
+                                .name(Text.literal("Summary sort order"))
+                                .binding(SummarySortMode.Name, () -> SummarySortMode.valueOf(summarySortMode), newVal -> summarySortMode = newVal.name())
+                                .controller(opt -> EnumControllerBuilder.create(opt).enumClass(SummarySortMode.class)).build())
+
                         .option(Option.<HandSearchMode>createBuilder()
                                 .name(Text.literal("Handheld search mode"))
                                 .binding(HandSearchMode.Name, () -> HandSearchMode.valueOf(handSearchMode), newVal -> handSearchMode = newVal.name())
@@ -128,6 +134,10 @@ public class IFConfig {
     public enum SortMode {
         Name,
         Coords
+    }
 
+    public enum SummarySortMode {
+        Name,
+        Count
     }
 }

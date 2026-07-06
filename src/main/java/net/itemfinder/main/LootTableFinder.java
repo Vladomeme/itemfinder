@@ -44,7 +44,7 @@ public class LootTableFinder {
     @SuppressWarnings("SameReturnValue")
     public static int search(String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity source = getSourcePlayer(context);
-        if (searching.get()) {
+        if (searching) {
             source.sendMessage(Text.of("Search already in progress..."));
             return 1;
         }
@@ -69,7 +69,7 @@ public class LootTableFinder {
      */
     @SuppressWarnings("SameReturnValue")
     public static int prepareGlobalSearch(String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
-        if (searching.get()) {
+        if (searching) {
             getSourcePlayer(context).sendMessage(
                     Text.of("Search is already active (" + (System.nanoTime() - startTime) / 1000000000
                             + "s., requested by " + currentUser.getGameProfile().name()));
@@ -98,7 +98,7 @@ public class LootTableFinder {
     @SuppressWarnings("SameReturnValue")
     public static void globalSearch() {
         lootTableSearchRequested = false;
-        searching.set(true);
+        searching = true;
 
         startTime = System.nanoTime();
 
@@ -114,7 +114,7 @@ public class LootTableFinder {
 
             //Iterating through all generated chunks, extracting their block entity data.
             for (Long position : chunkPositions) {
-                if (!searching.get()) {
+                if (!searching) {
                     sendResults();
                     break;
                 }
@@ -134,14 +134,14 @@ public class LootTableFinder {
                         future.complete(null);
                         return;
                     }
-                    if (!searching.get() || compound.isEmpty()) {
+                    if (!searching || compound.isEmpty()) {
                         future.complete(null);
                         return;
                     }
 
                     NbtCompound nbtData = compound.get();
                     try {
-                        if (!searching.get()) {
+                        if (!searching) {
                             future.complete(null);
                             return;
                         }
@@ -165,10 +165,10 @@ public class LootTableFinder {
                 sendResults();
                 currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
                         .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
-                searching.set(false);
+                searching = false;
             }
             catch (Throwable e) {
-                searching.set(false);
+                searching = false;
                 IFMod.LOGGER.error("Scan crashed!! Congratulations :)", e);
                 throw new RuntimeException(e);
             }

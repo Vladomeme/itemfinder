@@ -36,13 +36,11 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 java {
-	withSourcesJar()
+	//withSourcesJar()
 }
 
-jar {
-	from("LICENSE") {
-		rename { "${it}_${project.archives_base_name}"}
-	}
+remapJar {
+	archiveFileName = project.property("archives_base_name") + "-" + project.property("mod_version") + ".jar"
 }
 
 publishing {

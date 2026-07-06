@@ -50,6 +50,7 @@ public class IFMod implements ModInitializer {
                                         .then(literal("global")
                                         .executes(context -> LootTableFinder.prepareGlobalSearch(StringArgumentType.getString(context, "name"), context))
                         )))
+                        .then(literal("summary").executes(SummaryBuilder::buildSummaryGlobal))
                         .then(literal("stop")
                                 .executes(Controller::stop))
                         .then(literal("next")

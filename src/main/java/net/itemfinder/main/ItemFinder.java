@@ -60,7 +60,7 @@ public class ItemFinder {
     @SuppressWarnings("SameReturnValue")
     public static int search(int type, String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerPlayerEntity player = getSourcePlayer(context);
-        if (searching.get()) {
+        if (searching) {
             player.sendMessage(Text.of("Search already in progress..."));
             return 1;
         }
@@ -87,7 +87,7 @@ public class ItemFinder {
      */
     @SuppressWarnings("SameReturnValue")
     public static int prepareGlobalSearch(int type, String s, CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
-        if (searching.get()) {
+        if (searching) {
             getSourcePlayer(context).sendMessage(
                     Text.of("Search is already active (" + (System.nanoTime() - startTime) / 1000000000
                             + "s., requested by " + currentUser.getGameProfile().name() + ")"));
@@ -120,7 +120,7 @@ public class ItemFinder {
         Objects.requireNonNull(currentUser.getEntityWorld().getServer()).save(true, true, false);
 
         itemSearchRequested = false;
-        searching.set(true);
+        searching = true;
 
         startTime = System.nanoTime();
 
@@ -136,7 +136,7 @@ public class ItemFinder {
 
             //Iterating through all generated chunks, extracting their block entity & entity data.
             for (Long position : chunkPositions) {
-                if (!searching.get()) {
+                if (!searching) {
                     sendResults();
                     break;
                 }
@@ -158,14 +158,14 @@ public class ItemFinder {
                         future.complete(null);
                         return;
                     }
-                    if (!searching.get() || compound.isEmpty()) {
+                    if (!searching || compound.isEmpty()) {
                         future.complete(null);
                         return;
                     }
 
                     NbtCompound nbtData = compound.get();
                     try {
-                        if (!searching.get()) {
+                        if (!searching) {
                             future.complete(null);
                             return;
                         }
@@ -187,12 +187,12 @@ public class ItemFinder {
                         future.complete(null);
                         return;
                     }
-                    if (!searching.get() || entities.isEmpty()) {
+                    if (!searching || entities.isEmpty()) {
                         future.complete(null);
                         return;
                     }
                     try {
-                        if (!searching.get()) {
+                        if (!searching) {
                             future.complete(null);
                             return;
                         }
@@ -215,10 +215,10 @@ public class ItemFinder {
                 sendResults();
                 currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
                         .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
-                searching.set(false);
+                searching = false;
             }
             catch (Throwable e) {
-                searching.set(false);
+                searching = false;
                 IFMod.LOGGER.error("Scan crashed!! Congratulations :)", e);
                 throw new RuntimeException(e);
             }
@@ -232,7 +232,17 @@ public class ItemFinder {
     public static void checkEntity(Entity entity, int type, String s) {
         entityCount.incrementAndGet();
 
+        List<ItemStack> inventory = entityToInventory(entity);
+
+        if (inventory.isEmpty()) return;
+
+        checkInventory(inventory, type, s).ifPresent(stack -> results.add(
+                new SearchResult(((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos(), stack)));
+    }
+
+    public static List<ItemStack> entityToInventory(Entity entity) {
         List<ItemStack> inventory = new ArrayList<>();
+
         if (entity instanceof ItemFrameEntity) inventory.add(((ItemFrameEntity) entity).getHeldItemStack());
         else if (entity instanceof ArmorStandEntity) getEquipment(entity, inventory);
         else if (entity instanceof ItemEntity) inventory.add(((ItemEntity) entity).getStack());
@@ -242,10 +252,7 @@ public class ItemFinder {
         else if (entity instanceof MerchantEntity && IFConfig.INSTANCE.scanTrades)
             getTrades((MerchantEntity) entity, inventory);
 
-        if (inventory.isEmpty()) return;
-
-        checkInventory(inventory, type, s).ifPresent(stack -> results.add(
-                new SearchResult(((EntityMixin) entity).getDefaultName().getString(), entity.getBlockPos(), stack)));
+        return inventory;
     }
 
     public static void getEquipment(Entity entity, List<ItemStack> inventory) {
@@ -361,9 +368,9 @@ public class ItemFinder {
     /**
      * If given inventory (in NBT form) contains an item stack that matches the search parameters (id/name/data), returns that item stack.
      */
-    public static Optional<ItemStack> checkInventoryNBT(NbtList inventory, boolean shulker) {
+    public static Optional<ItemStack> checkInventoryNBT(NbtList inventory, boolean isShulker) {
         for (NbtElement item : inventory) {
-            NbtCompound nbt = shulker ? ((NbtCompound) item).getCompoundOrEmpty("item") : (NbtCompound) item;
+            NbtCompound nbt = isShulker ? ((NbtCompound) item).getCompoundOrEmpty("item") : (NbtCompound) item;
             String id = nbt.getString("id", "");
 
             //If item has NBT data, see if it contains any items within it.
@@ -450,9 +457,8 @@ public class ItemFinder {
     public static Optional<ItemStack> checkNestedNBT(String id, NbtCompound nbt) {
         if (id.contains("bundle"))
             return checkInventoryNBT(nbt.getCompoundOrEmpty("components").getListOrEmpty("minecraft:bundle_contents"), false);
-        else if (id.contains("shulker_box")) {
+        else if (id.contains("shulker_box"))
             return checkInventoryNBT(nbt.getCompoundOrEmpty("components").getListOrEmpty("minecraft:container"), true);
-        }
         return Optional.empty();
     }
 
