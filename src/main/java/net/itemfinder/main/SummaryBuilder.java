@@ -35,9 +35,12 @@ import java.util.concurrent.atomic.LongAdder;
 
 import static net.itemfinder.main.Controller.*;
 
+//todo coordinate sets
 public class SummaryBuilder {
 
     static final ConcurrentHashMap<ItemStackWrapper, LongAdder> results = new ConcurrentHashMap<>(10000);
+
+    static LongAdder emptyChests;
 
     @SuppressWarnings("SameReturnValue")
     public static int buildSummaryGlobal(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
@@ -55,6 +58,7 @@ public class SummaryBuilder {
 
         searching = true;
         startTime = System.nanoTime();
+        emptyChests = new LongAdder();
 
         scanExecutor.submit(() -> {
             ServerWorld world = currentUser.getEntityWorld();
@@ -144,9 +148,9 @@ public class SummaryBuilder {
             try {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
                 if (searching) {
-                    sendResults();
                     currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
                             .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
+                    sendResults();
                     searching = false;
                 }
             }
@@ -171,7 +175,14 @@ public class SummaryBuilder {
 
     private static void checkBlockEntity(NbtCompound nbt) {
         blockCount.incrementAndGet();
-        checkInventoryNBT(nbt.getListOrEmpty("Items"));
+        NbtList inventory = nbt.getListOrEmpty("Items");
+        if (!inventory.isEmpty()) {
+            checkInventoryNBT(nbt.getListOrEmpty("Items"));
+        }
+        else {
+            String id = nbt.getString("id", "");
+            if (id.equals("minecraft:chest")) emptyChests.increment();
+        }
     }
 
     private static void checkEntity(Entity entity) {
@@ -222,7 +233,8 @@ public class SummaryBuilder {
                 .toList();
 
         currentUser.sendMessage(Text.of("/-----------------------------/"));
-        currentUser.sendMessage(Text.of("Items: " + blockCount));
+        currentUser.sendMessage(Text.of("Empty chests: " + emptyChests.longValue()));
+        currentUser.sendMessage(Text.of("Items:"));
 
         int i = 0;
         //format: 1. <item name> x<count>

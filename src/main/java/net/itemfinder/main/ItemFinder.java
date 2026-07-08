@@ -212,9 +212,9 @@ public class ItemFinder {
             try {
                 CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
                 if (searching) {
-                    sendResults();
                     currentUser.sendMessage(Text.literal("Finished in " + (System.nanoTime() - startTime) / 1000000000 + "s.")
                             .setStyle(Style.EMPTY.withColor(Formatting.AQUA)));
+                    sendResults();
                     searching = false;
                 }
             }
