@@ -1,5 +1,6 @@
 package net.itemfinder.main;
 
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
@@ -18,10 +19,7 @@ import net.minecraft.world.storage.RegionFile;
 import java.io.File;
 import java.io.IOException;
 import java.nio.IntBuffer;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -50,6 +48,7 @@ public class Controller {
     static final AtomicInteger entityCount = new AtomicInteger(0);
 
     static final Map<String, List<BlockPos>> coordinates = new HashMap<>();
+    static final Map<String, List<List<BlockPos>>> summaryCoordinates = new HashMap<>();
     static final Map<String, Integer> currentPositions = new HashMap<>();
 
     /**
@@ -151,6 +150,10 @@ public class Controller {
 
         ItemFinder.results.clear();
         LootTableFinder.results.clear();
+        SummaryBuilder.itemResults.clear();
+        SummaryBuilder.lootTableResults.clear();
+        SummaryBuilder.emptyChests = null;
+        SummaryBuilder.emptyChestsNoLootTable = null;
     }
 
     public static void setPlayerCoordinates(List<? extends AbstractSearchResult> results) {
@@ -165,6 +168,30 @@ public class Controller {
         for (AbstractSearchResult result : results) playerCoordinates.add(result.pos);
 
         currentPositions.put(playerName, 1);
+    }
+
+    public static void addSummaryCoordinates(Set<BlockPos> positions) {
+        String playerName = currentUser.getGameProfile().name();
+        List<List<BlockPos>> playerCoordinates = summaryCoordinates.computeIfAbsent(playerName, k -> new ArrayList<>());
+        playerCoordinates.add(new ArrayList<>(positions));
+    }
+
+    @SuppressWarnings("SameReturnValue")
+    public static int setPlayerCoordinates(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+        ServerPlayerEntity player = getSourcePlayer(context);
+        String playerName = player.getGameProfile().name();
+        List<List<BlockPos>> playerCoordinates = summaryCoordinates.computeIfAbsent(playerName, k -> new ArrayList<>());
+
+        int id = IntegerArgumentType.getInteger(context, "set_id");
+        if (id < 0 || id >= playerCoordinates.size()) {
+            player.sendMessage(Text.literal("Coordinate set with this ID doesn't exist.").setStyle(Style.EMPTY.withColor(Formatting.RED)));
+        }
+        else {
+            coordinates.put(playerName, playerCoordinates.get(id));
+            currentPositions.put(playerName, 1);
+            player.sendMessage(Text.literal("Updated teleport queue!").setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
+        }
+        return 1;
     }
 
     /**
