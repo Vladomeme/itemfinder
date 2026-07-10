@@ -38,9 +38,11 @@ import static net.itemfinder.main.Controller.*;
 //todo coordinate sets
 public class SummaryBuilder {
 
-    static final ConcurrentHashMap<ItemStackWrapper, LongAdder> results = new ConcurrentHashMap<>(10000);
+    static final ConcurrentHashMap<ItemStackWrapper, LongAdder> itemResults = new ConcurrentHashMap<>(10000);
+    static final ConcurrentHashMap<String, LongAdder> lootTableResults = new ConcurrentHashMap<>(1000);
 
     static LongAdder emptyChests;
+    static LongAdder emptyChestsNoLootTable;
 
     @SuppressWarnings("SameReturnValue")
     public static int buildSummaryGlobal(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
@@ -51,7 +53,8 @@ public class SummaryBuilder {
             return 1;
         }
 
-        results.clear();
+        itemResults.clear();
+        lootTableResults.clear();
         currentUser = getSourcePlayer(context);
         currentUser.sendMessage(Text.of("Saving chunk data..."));
         Objects.requireNonNull(currentUser.getEntityWorld().getServer()).save(true, true, false);
@@ -59,6 +62,7 @@ public class SummaryBuilder {
         searching = true;
         startTime = System.nanoTime();
         emptyChests = new LongAdder();
+        emptyChestsNoLootTable = new LongAdder();
 
         scanExecutor.submit(() -> {
             ServerWorld world = currentUser.getEntityWorld();
@@ -166,22 +170,40 @@ public class SummaryBuilder {
     private static void submitStack(ItemStack stack) {
         int count = stack.getCount();
         stack.setCount(1);
-        results.compute(new ItemStackWrapper(stack), (stack1, adder) -> {
+        itemResults.compute(new ItemStackWrapper(stack), (stack1, adder) -> {
             if (adder == null) adder = new LongAdder();
             adder.add(count);
             return adder;
         });
     }
 
+    static final Set<String> lootableIDs = Set.of("minecraft:barrel", "minecraft:dispenser", "minecraft:dropper",
+            "minecraft:hopper", "minecraft:shulker_box", "minecraft:trapped_chest");
+
     private static void checkBlockEntity(NbtCompound nbt) {
         blockCount.incrementAndGet();
+
         NbtList inventory = nbt.getListOrEmpty("Items");
-        if (!inventory.isEmpty()) {
-            checkInventoryNBT(nbt.getListOrEmpty("Items"));
-        }
-        else {
-            String id = nbt.getString("id", "");
-            if (id.equals("minecraft:chest")) emptyChests.increment();
+        String id = nbt.getString("id", "");
+        boolean isChest = id.equals("minecraft:chest");
+
+        if (!inventory.isEmpty()) checkInventoryNBT(nbt.getListOrEmpty("Items"));
+        else if (isChest) emptyChests.increment();
+
+        //loot tables
+        if (isChest || (!IFConfig.INSTANCE.onlyShowChestsLootTable && lootableIDs.contains(id))) {
+            //BlockPos pos = new BlockPos(nbt.getInt("x", 0), nbt.getInt("y", 0), nbt.getInt("z", 0));
+
+            String lootTable = nbt.getString("LootTable", "");
+
+            if (!lootTable.isEmpty()) {
+                lootTableResults.compute(lootTable, (table, adder) -> {
+                    if (adder == null) adder = new LongAdder();
+                    adder.increment();
+                    return adder;
+                });
+            }
+            else if (inventory.isEmpty() && isChest) emptyChestsNoLootTable.increment();
         }
     }
 
@@ -227,19 +249,35 @@ public class SummaryBuilder {
      * Prints out search results with search stats.
      */
     private static void sendResults() {
-        List<Pair<ItemStack, Long>> resultList = results.entrySet().stream()
-                .map(entry -> new Pair<>(entry.getKey().stack, entry.getValue().longValue()))
-                .sorted(SummaryBuilder::comparePairs)
-                .toList();
+        currentUser.sendMessage(Text.literal("/-----------------------------/").setStyle(delimeterStyle));
+        currentUser.sendMessage(Text.of("  Empty chests: " + emptyChests.longValue()));
+        currentUser.sendMessage(Text.of("  Empty chests (no loot table): " + emptyChestsNoLootTable.longValue()));
 
-        currentUser.sendMessage(Text.of("/-----------------------------/"));
-        currentUser.sendMessage(Text.of("Empty chests: " + emptyChests.longValue()));
-        currentUser.sendMessage(Text.of("Items:"));
+        if (!itemResults.isEmpty()) {
+            currentUser.sendMessage(Text.of("-------------------------------"));
+            List<Pair<ItemStack, Long>> itemResultList = SummaryBuilder.itemResults.entrySet().stream()
+                    .map(entry -> new Pair<>(entry.getKey().stack, entry.getValue().longValue()))
+                    .sorted(SummaryBuilder::compareItemPairs)
+                    .toList();
+            currentUser.sendMessage(Text.literal("  Items:").setStyle(Style.EMPTY.withBold(true)));
 
-        int i = 0;
-        //format: 1. <item name> x<count>
-        for (Pair<ItemStack, Long> result : resultList) currentUser.sendMessage(makeMessage(++i, result.getLeft(), result.getRight()));
-        currentUser.sendMessage(Text.of("/-----------------------------/"));
+            int i = 0;
+            //format: 1. <item stack name> | <count>
+            for (Pair<ItemStack, Long> result : itemResultList) currentUser.sendMessage(makeItemMessage(++i, result.getLeft(), result.getRight()));
+        }
+        if (!lootTableResults.isEmpty()) {
+            currentUser.sendMessage(Text.of("-------------------------------"));
+            List<Pair<String, Long>> lootTableResultList = SummaryBuilder.lootTableResults.entrySet().stream()
+                    .map(entry -> new Pair<>(entry.getKey(), entry.getValue().longValue()))
+                    .sorted(SummaryBuilder::compareLootTablePairs)
+                    .toList();
+            currentUser.sendMessage(Text.literal("  Loot tables:").setStyle(Style.EMPTY.withBold(true)));
+
+            int i = 0;
+            //format: 1. <loot table name> | <count>
+            for (Pair<String, Long> result : lootTableResultList) currentUser.sendMessage(makeLootTableMessage(++i, result.getLeft(), result.getRight()));
+        }
+        currentUser.sendMessage(Text.literal("/-----------------------------/").setStyle(delimeterStyle));
 
         reset();
     }
@@ -255,10 +293,7 @@ public class SummaryBuilder {
 
     private static final Style countStyle = Style.EMPTY.withColor(Formatting.WHITE);
 
-    /**
-     * Used to make formatted lines for each search result entry.
-     */
-    private static Text makeMessage(int i, ItemStack stack, Long count) {
+    private static Text makeItemMessage(int i, ItemStack stack, Long count) {
         MutableText text = Text.literal(i + ". ");
         text.append(stack.getName().copy().styled(style -> style.withHoverEvent(new HoverEvent.ShowItem(stack))));
         text.append(Text.literal(" | ").setStyle(delimeterStyle));
@@ -266,13 +301,35 @@ public class SummaryBuilder {
         return text;
     }
 
-    private static int comparePairs(Pair<ItemStack, Long> o1, Pair<ItemStack, Long> o2) {
+    private static Text makeLootTableMessage(int i, String lootTable, Long count) {
+        MutableText text = Text.literal(i + ". ");
+        text.append(Text.of(lootTable));
+        text.append(Text.literal(" | ").setStyle(delimeterStyle));
+        text.append(Text.literal(count.toString()).setStyle(countStyle));
+        return text;
+    }
+
+    private static int compareItemPairs(Pair<ItemStack, Long> o1, Pair<ItemStack, Long> o2) {
         switch (IFConfig.INSTANCE.summarySortMode) {
             case "Count" -> {
                 return Long.compare(o2.getRight(), o1.getRight());
             }
             case "Name" -> {
                 return o1.getLeft().getName().getString().compareTo(o2.getLeft().getName().getString());
+            }
+            default -> {
+                return 0;
+            }
+        }
+    }
+
+    private static int compareLootTablePairs(Pair<String, Long> o1, Pair<String, Long> o2) {
+        switch (IFConfig.INSTANCE.summarySortMode) {
+            case "Count" -> {
+                return Long.compare(o2.getRight(), o1.getRight());
+            }
+            case "Name" -> {
+                return o1.getLeft().compareTo(o2.getLeft());
             }
             default -> {
                 return 0;
