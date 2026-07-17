@@ -184,12 +184,15 @@ public class Controller {
 
         int id = IntegerArgumentType.getInteger(context, "set_id");
         if (id < 0 || id >= playerCoordinates.size()) {
-            player.sendMessage(Text.literal("Coordinate set with this ID doesn't exist.").setStyle(Style.EMPTY.withColor(Formatting.RED)));
+            player.sendMessage(Text.literal("Coordinate set with this ID doesn't exist.")
+                    .setStyle(Style.EMPTY.withColor(Formatting.RED)));
         }
         else {
             coordinates.put(playerName, playerCoordinates.get(id));
             currentPositions.put(playerName, 1);
-            player.sendMessage(Text.literal("Updated teleport queue!").setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
+            player.sendMessage(Text.literal("Updated teleport queue! Result 1/" + playerCoordinates.size())
+                    .setStyle(Style.EMPTY.withColor(Formatting.YELLOW)), true);
+            teleportToNext(context);
         }
         return 1;
     }
