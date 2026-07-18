@@ -36,6 +36,13 @@ Special arguments:
   
 Vanilla loot tables (and custom loot tables under vanilla paths) should be enabled in the config to be included in command autocomplete options.  
 
+`/finditem empty`  
+Finds all empty chests or lootable containers (changed in config). Alias for `/finditem loot_table none_empty`.  
+
+`/finditem summary`  
+Collects and prints out information about all existing unique items and loot tables, including counts. Only uses global mode.
+Item stacks are grouped into one entry if their id an components are equal. Sorting by name/counts can be configured.  
+
 ### Search modes
 **Normal** mode only checks currently loaded chunks & entities, runs instantly.  
   
